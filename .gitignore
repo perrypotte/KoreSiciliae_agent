@@ -2,3 +2,7 @@ main2.py
 requirements.txt
 Dockerfile
 .vscode
+.env
+venv
+*_*old.py
+resources_chunks.json

@@ -1,66 +1,266 @@
-import bs4
-from langchain_community.document_loaders import WebBaseLoader
-from langchain_postgres import PGVector
-import getpass
+import asyncio
 import os
-os.environ["NVIDIA_API_KEY"] = "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"
-if not os.environ.get("NVIDIA_API_KEY"):
-    os.environ["NVIDIA_API_KEY"] = getpass.getpass("Enter API key for NVIDIA: ")
-
+from dotenv import load_dotenv
+from urllib.parse import urljoin
+import json
+from crawl4ai import AsyncWebCrawler
+from bs4 import BeautifulSoup
+from langchain_postgres import PGVector
+from markdownify import markdownify as md
+import httpx
+import getpass
 from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+
+BASE_URL = "https://www.koresiciliae.it/WhatToDo"
+
+
+# =========================
+# CONFIG
+# =========================
+
+#RESOURCE_ITEM_SELECTOR = ".col-md-4.col-xs-12.resource-item.k-listview-item"
+
+#RESOURCE_LINK_SELECTOR = "a.fullwidth.link-reset"
+
+#NEXT_BUTTON_SELECTOR = 'a[title="Vai all\'ultima pagina"]'
+
+RESOURCE_BASE_URL = "https://www.koresiciliae.it/search/resource?id="
+
+CONTENT_SELECTOR = "div.content-tab.content-tab-active"
+
+RESOURCE_TYPE_SELECTOR = ".mgtop5.search-tag.tag-large"
+
+TITLE_SELECTOR = ".resource-title h1.mgtop15"
+
+#devo prenderli dal file .env come si fa?
+load_dotenv()
+if not os.getenv("NVIDIA_API_KEY"):
+    os.environ["NVIDIA_API_KEY"] = getpass.getpass("Enter API key for NVIDIA: ")
 
 embeddings = NVIDIAEmbeddings(model="nvidia/nv-embed-v1")
 
 vector_store = PGVector(
     embeddings=embeddings,
-    collection_name="embeddings",
-    connection="postgresql://postgres:postgres@localhost:5432/mydb",
+    collection_name="koreSiciliae_resources",
+    connection=os.getenv("DATABASE_URL"),
 )
 
 
-""" bs4_strainer = bs4.SoupStrainer()
-loader = WebBaseLoader(
-    web_paths=("https://www.koresiciliae.it/ci-presentiamo",),
-    bs_kwargs={"parse_only": bs4_strainer},
-)
-docs = loader.load()
- """
-from bs4 import BeautifulSoup
-loader = WebBaseLoader(
-    web_paths=("https://www.koresiciliae.it/ci-presentiamo",),
-)
+# =========================
+# HELPERS
+# =========================
 
-docs = loader.load()
+def html_to_markdown(html: str) -> str:
+    return md(
+        html,
+        heading_style="ATX",
+        strip=["script", "style"]
+    ).strip()
 
-html = docs[0].page_content
+def parse_resource_page(html: str, url: str):
+    #TODO OCCHIO HANNOS SCRITTO openResoursePage INVECE DI openResourcePage nella funzione di onclick per aprire la risorsa
+    soup = BeautifulSoup(html, "html.parser")
 
-soup = BeautifulSoup(html, "html.parser")
-# Rimuovi roba inutile
-for tag in soup(["script", "style", "nav", "footer", "header"]):
-    tag.decompose()
-text = text = soup.get_text(separator="\n", strip=True)
-lines = text.split("\n")
-clean_lines = [line for line in lines if len(line) > 40]  # tieni solo frasi "vere"
-clean_text = "\n".join(clean_lines)
+    content_div = soup.select_one(CONTENT_SELECTOR)
 
-print(clean_text)
-""" print(text) """
+    resource_type_el = soup.select_one(RESOURCE_TYPE_SELECTOR)
 
-assert len(docs) == 1
+    title_el = soup.select_one(TITLE_SELECTOR)
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+    resource_type = (
+        resource_type_el.get_text(" ", strip=True)
+        if resource_type_el else ""
+    )
 
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=600,  # chunk size (characters)
-    chunk_overlap=50,  # chunk overlap (characters)
-    add_start_index=True,  # track index in original document
-)
-all_splits = text_splitter.split_documents(docs)
+    title = (
+        title_el.get_text(" ", strip=True)
+        if title_el else ""
+    )
 
-print(f"Split blog post into {len(all_splits)} sub-documents.")
+    markdown_content = ""
 
-document_ids = vector_store.add_documents(documents=all_splits)
+    if content_div:
+        markdown_content = html_to_markdown(
+            str(content_div)
+        )
 
-print(document_ids[:3])
-#print(f"Total characters: {len(docs[0].page_content)}")
-#print(docs[0].page_content[:500])
+    return {
+        "url": url,
+        "resource_type": resource_type,
+        "title": title,
+        "markdown": markdown_content
+    }
+
+
+# =========================
+# MAIN CRAWLER
+# =========================
+
+async def crawl_resources():
+
+    resource_urls = set()
+
+    #TODO: dopo vari esperimenti, sembra che la lista sia fatta con Kendo UI + POST AJAX ed in questo caso non conviene usare crawl4ai perché
+    # porta sempre alla pagina originale senza aggiornare il contenuto (sembrerebbe dopo vari tentativi).
+    # La cosa migliore è fare direttamente le chiamate POST con il payload giusto e ricavare gli url delle risorse dagli ID contenuti nel json
+    # della response. 
+    resource_urls = set()
+
+    async with httpx.AsyncClient(timeout=30) as client:
+
+        #TODO: non ho capito perché basta iterare su queste due per avere tutte le risorse. Specialmente perché il pageSize è 9.
+        for page in range(1, 2):
+
+            payload = {
+                "page": page,
+                "pageSize": 9,
+                "categoryId": 0,
+                "subcategoryId": 0,
+                "favorite": True,
+            }
+
+            print(f"\n[PAGE {page}]")
+
+            response = await client.post(
+                BASE_URL+"/ResourcesRead",
+                json=payload
+            )
+
+            response.raise_for_status()
+
+            json_data = response.json()
+
+            # DEBUG
+            # print(json_data)
+
+            # Json start with "Data"
+            resources = json_data.get("Data", [])
+
+            print(f"Risorse trovate: {len(resources)}")
+
+            for resource in resources:
+
+                resource_id = resource.get("Id")
+
+                if not resource_id:
+                    continue
+
+                resource_url = (
+                    f"{RESOURCE_BASE_URL}{resource_id}"
+                )
+
+                resource_urls.add(resource_url)
+
+        # =========================
+        # RESOURCE PAGES
+        # =========================
+
+        documents = []
+
+    #TODO: potevo usare direttamente BeautifulSoup? Crawl4AI è più immediato nelle configurazioni?
+    async with AsyncWebCrawler() as crawler:
+
+        for idx, resource_url in enumerate(resource_urls):
+
+            print(f"\n[{idx+1}/{len(resource_urls)}] {resource_url}")
+
+            try:
+                result = await crawler.arun(url=resource_url)
+
+                data = parse_resource_page(
+                    result.html,
+                    resource_url
+                )
+
+                documents.append(data)
+
+            except Exception as e:
+                print("Errore:", e)
+
+    return documents
+
+
+# =========================
+# CHUNKING
+# =========================
+
+def build_chunks(documents):
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1200,
+        chunk_overlap=200
+    )
+
+    chunks = []
+
+    for doc in documents:
+
+        text_chunks = splitter.split_text(
+            doc["markdown"]
+        )
+
+        for i, chunk in enumerate(text_chunks):
+
+            chunks.append({
+                "chunk": chunk,
+                "chunk_id": i,
+                "url": doc["url"],
+                "title": doc["title"],
+                "resource_type": doc["resource_type"]
+            })
+
+    return chunks
+
+
+# =========================
+# RUN
+# =========================
+
+# Define the metadata extraction function.
+def metadata_func(record: dict, metadata: dict) -> dict:
+    #TODO: vedere come togliere i metadati default come source che prende il path sul mio pc
+    metadata["chunk_id"] = record.get("chunk_id")
+    metadata["url"] = record.get("url")
+    metadata["title"] = record.get("title")
+    metadata["resource_type"] = record.get("resource_type")
+
+    return metadata
+
+async def main():
+
+    #TODO: Ho fatto solo le risorse. Per la home e altre pagine la struttura va cambiata leggermente perché sono organizzate in modo diverso.
+    documents = await crawl_resources()
+
+    chunks = build_chunks(documents)
+
+    print(f"\nChunks creati: {len(chunks)}")
+
+    with open("resources_chunks.json", "w", encoding="utf-8") as f:
+        json.dump(
+            chunks,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    from langchain_community.document_loaders import JSONLoader
+
+    loader = JSONLoader(
+        file_path="resources_chunks.json",
+        jq_schema='.[]',
+        content_key='chunk',
+        text_content=False,
+        metadata_func=metadata_func
+    )
+
+    docs = loader.load()
+
+    #Insert chunks into PGVector
+    document_ids = vector_store.add_documents(documents=docs, ids=None)  # Let PGVector generate IDs
+    #print(docs[0])
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

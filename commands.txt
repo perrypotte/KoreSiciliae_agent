@@ -1,0 +1,21 @@
+docker compose up -d (build del docker compose file)
+
+docker ps (per vedere la situazione con i container)
+
+docker compose logs nomecontainer  (anche senza nome container)
+
+docker exec -it pgvector-db psql -U postgres -d mydb  (test del servizio postgres)  (docker exec -it nomecontainer nomepull??)
+CREATE EXTENSION vector;  (aggiungere pgvector)
+
+docker compose down
+
+pnpm add drizzle-orm (aggiungi dipendenze al progetto)
+
+drizzle's scripts
+db:generate
+db:migrate
+db:push
+db:studio
+
+Accesso temporaneo agli scripts su powershell (per venv)
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
