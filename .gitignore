@@ -6,3 +6,6 @@ Dockerfile
 venv
 *_*old.py
 resources_chunks.json
+__pycache__
+.langgraph_api
+mainChainLit.py

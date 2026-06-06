@@ -1,0 +1,42 @@
+{
+  "distinct_resource_types": [
+    "Attivita / Corsi e laboratori",
+    "Attivita / Corsi e laboratori, Attività culturali",
+    "Attivita / Degustazioni",
+    "Attivita / Degustazioni, Corsi e laboratori",
+    "Attivita / Degustazioni, Corsi e laboratori, Attività culturali",
+    "Attivita / Escursioni, Sport",
+    "Attivita / Escursioni, Visite guidate, Attività culturali",
+    "Attivita / Escursioni, Visite guidate, Degustazioni, Corsi e laboratori, Attività culturali",
+    "Attrazioni / Castelli e fortezze",
+    "Attrazioni / Castelli e fortezze, Siti archeologici",
+    "Attrazioni / Castelli e fortezze, Siti archeologici, Paesaggio e natura",
+    "Attrazioni / Giardini monumentali, Parchi e oasi naturali, Paesaggio e natura",
+    "Attrazioni / Luoghi di culto, Siti archeologici, Paesaggio e natura",
+    "Attrazioni / Musei e mostre",
+    "Attrazioni / Paesaggio e natura",
+    "Attrazioni / Palazzi e monumenti",
+    "Attrazioni / Palazzi e monumenti, Castelli e fortezze, Paesaggio e natura",
+    "Attrazioni / Palazzi e monumenti, Siti archeologici, Parchi e oasi naturali",
+    "Attrazioni / Palazzi e monumenti, Siti archeologici, Parchi e oasi naturali, Paesaggio e natura",
+    "Attrazioni / Parchi e oasi naturali",
+    "Attrazioni / Parchi e oasi naturali, Paesaggio e natura",
+    "Attrazioni / Siti archeologici",
+    "Attrazioni / Siti archeologici, Castelli e fortezze",
+    "Attrazioni / Siti archeologici, Paesaggio e natura",
+    "Attrazioni / Siti archeologici, Parchi e oasi naturali",
+    "Attrazioni / Siti archeologici, Parchi e oasi naturali, Paesaggio e natura",
+    "Shopping / Artigianato",
+    "Shopping / Cibo e vino",
+    "Shopping / Gioielli"
+  ],
+  "distinct_section_headers": [
+    "Adatto a:",
+    "Come raggiungere",
+    "Generico",
+    "Periodi e orari di apertura",
+    "Regole di visita",
+    "Supplementi e sconti",
+    "Tags"
+  ]
+}

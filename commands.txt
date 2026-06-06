@@ -19,3 +19,6 @@ db:studio
 
 Accesso temporaneo agli scripts su powershell (per venv)
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+langsmith studio
+langgraph dev
