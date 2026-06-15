@@ -33,50 +33,36 @@ vector_store = PGVector(
 # Non voglio farlo fare all'agente perché aggiungo complessità inutile e rischio di errori
 # Aggiustare resource_types_or come nome del campo
 def build_filter(f):
-    filter_dict = {}
+    conditions = []
 
-    # parte fissa
     if "section_header" in f:
-        filter_dict["section_header"] = f["section_header"]
+        conditions.append({"section_header": f["section_header"]})
 
     if "title" in f:
-        filter_dict["title"] = f["title"]
+        conditions.append({"title": f["title"]})
 
-    # parte OR
-    if "resource_types_or" in f:
-        filter_dict["$and"] = [
-            filter_dict if filter_dict else {},
-            {
-                "$or": [
-                    {"resource_types": v}
-                    for v in f["resource_types"]
-                ]
-            }
-        ]
+    if "resource_types" in f:
+        conditions.append({
+            "$or": [
+                {"resource_types": v}
+                for v in f["resource_types"]
+            ]
+        })
 
-        # rimuove duplicazione se serve
-        if "section_header" in filter_dict:
-            base = {"section_header": filter_dict["section_header"]}
-            filter_dict = {
-                "$and": [
-                    base,
-                    {
-                        "$or": [
-                            {"resource_types": v}
-                            for v in f["resource_types"]
-                        ]
-                    }
-                ]
-            }
+    if len(conditions) == 0:
+        return {}
 
-    return filter_dict
+    if len(conditions) == 1:
+        return conditions[0]
+
+    return {"$and": conditions}
 
 @tool(response_format="content_and_artifact")
 def retrieve_context(query: str,filter: dict = None):
     """Retrieve information to help answer a query."""
-    print("Raw filter input:", filter)
+    print("\n\nRaw filter input:", filter)
     filter=build_filter(filter) if filter else {}
-    print(f"\n\nTool called with query: {query} and filter: {filter}\n\n")
+    print(f"Tool called with query: {query} and filter: {filter}\n\n")
     retrieved_docs = vector_store.similarity_search(query, k=3,filter=filter)
     serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}")
