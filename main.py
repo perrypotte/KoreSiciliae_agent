@@ -254,7 +254,7 @@ agent = create_agent(
 
     User: Tell me about Arancino Express
 
-    Step 1: semantic retrieval (resource_types = Shopping_Cibo_e_vino,Attivita_Degustazioni (Use mongodb style operator $in))
+    Step 1: semantic retrieval (resource_types = [Shopping_Cibo_e_vino,Attivita_Degustazioni])
     Step 2: extract title = Arancino Express
     Step 3: retrieve sections:
     - Generico
