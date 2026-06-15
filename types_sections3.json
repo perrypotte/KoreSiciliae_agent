@@ -1,0 +1,30 @@
+{
+  "distinct_resource_types": [
+    "Attivita_Attività_culturali",
+    "Attivita_Corsi_e_laboratori",
+    "Attivita_Degustazioni",
+    "Attivita_Escursioni",
+    "Attivita_Sport",
+    "Attivita_Visite_guidate",
+    "Attrazioni_Castelli_e_fortezze",
+    "Attrazioni_Giardini_monumentali",
+    "Attrazioni_Luoghi_di_culto",
+    "Attrazioni_Musei_e_mostre",
+    "Attrazioni_Paesaggio_e_natura",
+    "Attrazioni_Palazzi_e_monumenti",
+    "Attrazioni_Parchi_e_oasi_naturali",
+    "Attrazioni_Siti_archeologici",
+    "Shopping_Artigianato",
+    "Shopping_Cibo_e_vino",
+    "Shopping_Gioielli"
+  ],
+  "distinct_section_headers": [
+    "Adatto a:",
+    "Come raggiungere",
+    "Generico",
+    "Periodi e orari di apertura",
+    "Regole di visita",
+    "Supplementi e sconti",
+    "Tags"
+  ]
+}
