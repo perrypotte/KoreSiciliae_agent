@@ -294,6 +294,10 @@ async def main(message: cl.Message):
         ]
     }
 
+    elements = []
+
+   
+
     async for chunk in agent.astream(
        inputs
     , stream_mode="values"):
@@ -310,9 +314,39 @@ async def main(message: cl.Message):
                 ).send()
             else:
                 print(f"Altro: {latest_message}")
+                docs=latest_message.artifact
+                for i, doc in enumerate(docs):
+
+                    md = doc.metadata
+
+                    content = f"""
+                # {md['title']}
+
+                **Sezione**
+                {md['section_header']}
+
+                **Categorie**
+                {", ".join(md["resource_types"])}
+
+                ---
+
+                {doc.page_content}
+                """
+
+                elements.append(
+                    cl.Text(
+                        name=f"Documento {i+1}",
+                        content=content,
+                        display="side"
+                    )
+                )
                 await cl.Message(
-                    content=f"Altro: {latest_message.content}",
+                    content=f"Trovati {len(docs)} documenti.",
+                    elements=elements
                 ).send()
+                # await cl.Message(
+                #     content=f"Altro: {latest_message.content}",
+                # ).send()
 
     # result = agent.invoke(
     # inputs,
