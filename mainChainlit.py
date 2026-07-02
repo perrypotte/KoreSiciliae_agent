@@ -320,30 +320,30 @@ async def main(message: cl.Message):
                     md = doc.metadata
 
                     content = f"""
-                # {md['title']}
+                    # {md['title']}
 
-                **Sezione**
-                {md['section_header']}
+                    **Sezione**
+                    {md['section_header']}
 
-                **Categorie**
-                {", ".join(md["resource_types"])}
+                    **Categorie**
+                    {", ".join(md["resource_types"])}
 
-                ---
+                    ---
 
-                {doc.page_content}
-                """
+                    {doc.page_content}
+                    """
 
-                elements.append(
-                    cl.Text(
-                        name=f"Documento {i+1}",
-                        content=content,
-                        display="side"
+                    elements.append(
+                        cl.Text(
+                            name=f"Documento {i+1}",
+                            content=content,
+                            display="side"
+                        )
                     )
-                )
-                await cl.Message(
-                    content=f"Trovati {len(docs)} documenti.",
-                    elements=elements
-                ).send()
+                    await cl.Message(
+                        content=f"Trovati {len(docs)} documenti.",
+                        elements=elements
+                    ).send()
                 # await cl.Message(
                 #     content=f"Altro: {latest_message.content}",
                 # ).send()
