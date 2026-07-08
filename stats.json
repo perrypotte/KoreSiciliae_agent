@@ -1,27 +1,28 @@
 {
   "type_counter": {
+    "Shopping_Cibo_e_vino": 15,
+    "Attrazioni_Palazzi_e_monumenti": 5,
     "Attrazioni_Siti_archeologici": 23,
+    "Attrazioni_Parchi_e_oasi_naturali": 17,
+    "Altro": 56,
     "Attrazioni_Luoghi_di_culto": 2,
     "Attrazioni_Paesaggio_e_natura": 29,
     "Attivita_Escursioni": 22,
     "Attivita_Visite_guidate": 21,
     "Attivita_Attività_culturali": 31,
-    "Attrazioni_Castelli_e_fortezze": 6,
-    "Attrazioni_Palazzi_e_monumenti": 5,
-    "Shopping_Cibo_e_vino": 15,
-    "Attrazioni_Parchi_e_oasi_naturali": 17,
-    "Shopping_Gioielli": 1,
+    "Attrazioni_Giardini_monumentali": 2,
+    "Shopping_Artigianato": 5,
     "Attivita_Degustazioni": 9,
     "Attivita_Corsi_e_laboratori": 14,
-    "Shopping_Artigianato": 5,
-    "Attrazioni_Giardini_monumentali": 2,
+    "Attrazioni_Castelli_e_fortezze": 6,
     "Attrazioni_Musei_e_mostre": 1,
-    "Attivita_Sport": 1
+    "Attivita_Sport": 1,
+    "Shopping_Gioielli": 1
   },
   "word_counts_stats": {
     "mean": 200.80645161290323,
-    "variance": 6865.381893860562,
-    "std_dev": 82.85760009715803,
+    "variance": 6865.381893860564,
+    "std_dev": 82.85760009715804,
     "min": 34,
     "max": 386,
     "median": 184.0
