@@ -1,3 +1,4 @@
+import json
 from typing import List
 from langchain.messages import HumanMessage, AIMessage, SystemMessage
 from langchain.tools import tool
@@ -11,7 +12,6 @@ import os
 from dotenv import load_dotenv
 
 import chainlit as cl
-
 
 load_dotenv()
 
@@ -188,35 +188,78 @@ def retrieve_context(query: str,filter: dict = None):
 
     return serialized, fused_docs
 
+from langchain.agents.middleware.types import AgentMiddleware
+from langchain.messages import SystemMessage
+from langchain.agents.middleware import ModelRequest, ModelResponse
+
+class ProfileMiddleware(AgentMiddleware):
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler
+    ) -> ModelResponse:
+
+        profile = cl.user_session.get("state", {}).get("profile", {})
+
+        profile_text = f"""
+USER PROFILE
+
+{profile}
+
+Usa queste informazioni solo se rilevanti per la richiesta corrente.
+Non menzionare mai esplicitamente il profilo all'utente.
+"""
+
+        new_content = list(request.system_message.content_blocks)
+
+        new_content.append({
+            "type": "text",
+            "text": profile_text
+        })
+
+        new_system_message = SystemMessage(
+            content=new_content
+        )
+
+        return await handler(
+            request.override(
+                system_message=new_system_message
+            )
+        )
+
 # Create the agent with a model and tools
 agent = create_agent(
     model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b"),
     tools=[retrieve_context],
+    middleware=[
+        ProfileMiddleware()
+    ],
     #TODO Aggiungere Altro tra le resource types possibili
     system_prompt = """
-You are an intelligent retrieval agent for a structured knowledge base about places, attractions, activities, experiences and shops.
+Sei un agente intelligente di recupero delle informazioni per una base di conoscenza strutturata relativa a luoghi, attrazioni, attività, esperienze e negozi.
 
-Your only source of factual information is the retrieval tool. Do not rely on your own knowledge when answering questions about the knowledge base.
-
-========================
-GENERAL BEHAVIOR
-========================
-
-- Always answer the user's request.
-- Never ask follow-up questions.
-- Never invent information.
-- Never guess.
-- Use the retrieval tool whenever information from the knowledge base is needed.
-- You may call the retrieval tool multiple times if necessary.
-- Do not stop after the first retrieval if additional retrievals are required to fully answer the user's request.
+La tua unica fonte di informazioni fattuali è lo strumento di recupero. Non fare affidamento sulle tue conoscenze per rispondere a domande riguardanti la base di conoscenza.
 
 ========================
-RESOURCE TYPE SELECTION
+COMPORTAMENTO GENERALE
 ========================
 
-Before each retrieval, determine which resource_types are most likely to contain relevant resources.
+- Rispondi sempre alla richiesta dell'utente.
+- Non porre mai domande di chiarimento o di follow-up.
+- Non inventare mai informazioni.
+- Non fare mai supposizioni.
+- Usa lo strumento di recupero ogni volta che sono necessarie informazioni presenti nella base di conoscenza.
+- Puoi utilizzare lo strumento di recupero più volte, se necessario.
+- Non fermarti dopo il primo recupero se sono necessarie ulteriori ricerche per rispondere in modo completo alla richiesta dell'utente.
 
-Available resource_types:
+========================
+SELEZIONE DEI RESOURCE TYPE
+========================
+
+Prima di ogni recupero, determina quali resource_types hanno maggiori probabilità di contenere le informazioni richieste.
+
+Resource type disponibili:
 
 - Attivita_Attività_culturali
 - Attivita_Corsi_e_laboratori
@@ -236,122 +279,136 @@ Available resource_types:
 - Shopping_Cibo_e_vino
 - Shopping_Gioielli
 
-Guidelines:
+Linee guida:
 
-- Do NOT try to find the single best category.
-- Select every resource_type that could reasonably contain relevant information.
-- Return between 1 and 5 resource_types.
-- Insert the selected resource_types into the filter parameter of the retrieval tool call as a list.
+- Non cercare di individuare una sola categoria "migliore".
+- Seleziona tutti i resource_types che potrebbero ragionevolmente contenere informazioni pertinenti.
+- Seleziona da 1 a 5 resource_types.
+- Inserisci i resource_types selezionati nel parametro filter della chiamata allo strumento di recupero come lista.
+- Se l'utente richiede informazioni basate sui propri gusti o preferenze, seleziona i resource_types indicati nel profilo della conversazione.
 
-Examples:
+Esempi:
 
-Food, restaurants, wine, local products:
+Cibo, ristoranti, vino, prodotti tipici:
 - Shopping_Cibo_e_vino
 - Attivita_Degustazioni
 
-Outdoor activities:
+Attività all'aperto:
 - Attivita_Escursioni
 - Attivita_Sport
 - Attrazioni_Paesaggio_e_natura
 - Attrazioni_Parchi_e_oasi_naturali
 
-Castles:
+Castelli:
 - Attrazioni_Castelli_e_fortezze
 
-Museums:
+Musei:
 - Attrazioni_Musei_e_mostre
 
-Churches and monasteries:
+Chiese e monasteri:
 - Attrazioni_Luoghi_di_culto
 
-Historic buildings and monuments:
+Edifici storici e monumenti:
 - Attrazioni_Palazzi_e_monumenti
 
-Emergency services, hospitals, pharmacies, parking, police stations:
+Servizi di emergenza, ospedali, farmacie, parcheggi, stazioni di polizia:
 - Altro
 
-Specific example:
-User: "Dimmi dove posso mangiare la pizza a Catania."
-filter: {"resource_types": ["Shopping_Cibo_e_vino", "Attivita_Degustazioni"]}
+Informazioni vaghe o richieste basate su preferenze personali:
+- Seleziona i resource_types indicati nel profilo della conversazione.
+
+Esempio specifico:
+
+Utente: "Dimmi dove posso mangiare la pizza a Catania."
+
+filter:
+{"resource_types": ["Shopping_Cibo_e_vino", "Attivita_Degustazioni"]}
 
 ========================
-MULTI-RESOURCE REQUESTS
+RICHIESTE CON PIÙ RISORSE
 ========================
 
-A user may ask about multiple places, attractions, activities or shops in a single request.
+L'utente potrebbe chiedere informazioni su più luoghi, attrazioni, attività o negozi nella stessa richiesta.
 
-When this happens:
+In questi casi:
 
-- Identify every requested resource.
-- Retrieve information for each resource.
-- Perform additional retrieval calls whenever necessary.
-- Do not stop after retrieving only one resource.
-- Combine all retrieved information into one coherent answer.
+- Identifica tutte le risorse richieste.
+- Recupera le informazioni per ciascuna di esse.
+- Effettua ulteriori chiamate allo strumento di recupero ogni volta che è necessario.
+- Non fermarti dopo aver recuperato informazioni su una sola risorsa.
+- Combina tutte le informazioni recuperate in un'unica risposta coerente.
 
-Examples:
+Esempi:
 
-"Compare Castello Ursino and Monastero dei Benedettini."
+"Confronta il Castello Ursino e il Monastero dei Benedettini."
 
-Retrieve both resources before answering.
+Recupera le informazioni su entrambe le risorse prima di rispondere.
 
-"Suggest museums and churches in Catania."
+"Suggeriscimi musei e chiese a Catania."
 
-Retrieve museums and churches before answering.
-
-========================
-USING RETRIEVED INFORMATION
-========================
-
-Each retrieved resource already contains all available information.
-
-Use only information contained in the retrieved resources.
-
-If multiple retrieved resources contribute useful information, combine them naturally.
-
-Ignore information unrelated to the user's request.
-
-If the retrieved information is insufficient, perform another retrieval instead of guessing.
-
-If no relevant information can be retrieved, clearly state that you could not find the requested information.
+Recupera sia i musei sia le chiese prima di rispondere.
 
 ========================
-FINAL ANSWER
+UTILIZZO DELLE INFORMAZIONI RECUPERATE
 ========================
 
-Generate a single natural-language answer.
+Ogni risorsa recuperata contiene già tutte le informazioni disponibili.
 
-The answer should be:
+- Usa esclusivamente le informazioni contenute nelle risorse recuperate.
+- Se più risorse contengono informazioni utili, integrale in modo naturale.
+- Ignora le informazioni non pertinenti alla richiesta dell'utente.
+- Se le informazioni recuperate non sono sufficienti, effettua un nuovo recupero invece di fare supposizioni.
+- Se non è possibile recuperare informazioni pertinenti, dichiara chiaramente di non aver trovato le informazioni richieste.
 
-- accurate
-- complete
-- concise
-- easy to read
-- directly focused on the user's question
+========================
+RISPOSTA FINALE
+========================
 
-Never mention:
+Genera un'unica risposta in linguaggio naturale.
 
-- retrieval
-- tools
-- filters
-- metadata
-- resource_types
-- embeddings
-- vector search
-- internal reasoning
-- planning
+La risposta deve essere:
 
-Never output:
+- accurata
+- completa
+- concisa
+- facile da leggere
+- direttamente focalizzata sulla domanda dell'utente
+
+Non menzionare mai:
+
+- il recupero delle informazioni
+- gli strumenti
+- i filtri
+- i metadati
+- i resource_types
+- gli embeddings
+- la ricerca vettoriale
+- il ragionamento interno
+- la pianificazione
+
+Non produrre mai:
 
 - JSON
-- lists of internal decisions
-- explanations of your reasoning
-- analysis
-- thoughts
-- plans
+- elenchi di decisioni interne
+- spiegazioni del tuo ragionamento
+- analisi
+- pensieri
+- piani
 
-The final response must contain ONLY the answer intended for the user without truncating.
+La risposta finale deve contenere solo il testo destinato all'utente, senza essere troncata.
 """
 )
+
+@cl.on_chat_start
+async def start():
+    state = {
+    "messages": [],
+    "profile": {
+        "preferred_resource_types": []
+    }
+}
+    cl.user_session.set("state", state)
+
 
 @cl.on_message
 async def main(message: cl.Message):
@@ -373,8 +430,134 @@ async def main(message: cl.Message):
 
     elements = []
 
-   
+    state = cl.user_session.get("state")
+    history = state["messages"]
+    history.append(
+        HumanMessage(content=message.content)
+    )
 
+    #PERSISTENZA A LIVELLO DI SESSIONE DELLA CHAT
+    # inputs = {
+    #     "messages": history
+    # }
+
+    model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b", temperature=0)
+    conversation = [
+    {"role": "system", "content": """Sei un Profile Updater.
+
+Il tuo unico compito è mantenere aggiornato il profilo temporaneo della conversazione.
+
+Riceverai sempre:
+
+- il profilo corrente della conversazione;
+- l'ultimo messaggio dell'utente.
+
+Il profilo rappresenta esclusivamente le preferenze espresse durante questa conversazione e NON deve essere considerato permanente.
+
+Il profilo ha il seguente formato:
+
+{
+    "preferred_resource_types": [
+        ...
+    ]
+}
+
+Le uniche categorie ammesse sono:
+
+- Attivita_Attività_culturali
+- Attivita_Corsi_e_laboratori
+- Attivita_Degustazioni
+- Attivita_Escursioni
+- Attivita_Sport
+- Attivita_Visite_guidate
+- Attrazioni_Castelli_e_fortezze
+- Attrazioni_Giardini_monumentali
+- Attrazioni_Luoghi_di_culto
+- Attrazioni_Musei_e_mostre
+- Attrazioni_Paesaggio_e_natura
+- Attrazioni_Palazzi_e_monumenti
+- Attrazioni_Parchi_e_oasi_naturali
+- Attrazioni_Siti_archeologici
+- Shopping_Artigianato
+- Shopping_Cibo_e_vino
+- Shopping_Gioielli
+
+Devi seguire rigorosamente queste regole.
+
+1. Aggiorna il profilo SOLO quando il messaggio esprime chiaramente una preferenza, un interesse, un gusto oppure una preferenza negativa.
+
+Esempi:
+
+- "Mi piace il vino."
+- "Sono interessato ai musei."
+- "Adoro le degustazioni."
+- "Preferisco le escursioni."
+- "Non mi interessano i castelli."
+
+2. NON modificare il profilo quando il messaggio contiene soltanto una richiesta di informazioni.
+
+Esempi:
+
+- "Parlami del Castello di Lombardia."
+- "Quali musei ci sono?"
+- "A che ora apre il museo?"
+- "Consigliami un ristorante."
+
+Queste NON rappresentano preferenze permanenti della conversazione.
+
+3. Se il messaggio modifica una preferenza precedente, aggiorna il profilo.
+
+Esempio:
+
+Profilo:
+{
+    "preferred_resource_types": [
+        "Shopping_Cibo_e_vino"
+    ]
+}
+
+Messaggio:
+"In realtà preferisco visitare musei."
+
+Nuovo profilo:
+{
+    "preferred_resource_types": [
+        "Attrazioni_Musei_e_mostre"
+    ]
+}
+
+4. Non inventare preferenze.
+
+5. Non dedurre preferenze implicite da una singola domanda.
+
+6. Mantieni il profilo invariato se il messaggio non contiene informazioni utili.
+
+7. Il profilo deve contenere solo categorie appartenenti all'elenco fornito.
+
+8. Non aggiungere spiegazioni.
+
+9. Restituisci esclusivamente il nuovo profilo o il profilo invariato in formato JSON valido.
+
+Nient'altro.
+"""},
+
+    {
+        "role": "user",
+        "content": f"""
+PROFILO CORRENTE:
+{json.dumps(cl.user_session.get("state", {}).get("profile", {}), ensure_ascii=False)}
+Ultimo messaggio dell'utente:
+{message.content}.
+"""
+    },
+        ]
+
+    response = model.invoke(conversation)
+    # print(response)  # AIMessage("J'adore créer des applications.")
+
+    print(cl.user_session.get("state", {}).get("profile", {}))
+    state["profile"] = response.content
+    print(state["profile"])
     async for chunk in agent.astream(
        inputs
     , stream_mode="values"):
@@ -389,6 +572,11 @@ async def main(message: cl.Message):
                 await cl.Message(
                     content=f"Agent: {latest_message.content}",
                 ).send()
+                history.append(
+                    AIMessage(content=latest_message.content)
+                )
+                state["messages"] = history
+                cl.user_session.set("state", state)
             else:
                 # print(f"Altro: {latest_message}")
                 docs=latest_message.artifact
