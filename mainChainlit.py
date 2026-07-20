@@ -1,3 +1,4 @@
+from http import client
 import json
 from typing import List
 from langchain.messages import HumanMessage, AIMessage, SystemMessage
@@ -10,6 +11,8 @@ from langchain_postgres import PGVector
 import getpass
 import os
 from dotenv import load_dotenv
+from langchain_nvidia_ai_endpoints import NVIDIARerank
+from langchain_core.documents import Document
 
 import chainlit as cl
 
@@ -166,6 +169,8 @@ def retrieve_context(query: str,filter: dict = None):
     #DEBUG
     #print("Numero documenti prima:", len(all_documents))
     #print("Numero documenti BM25:", len(bm25_documents))
+
+    #Qui costruisce ogni volta la tabella di lookup quindi in realtà viene eseguito sempre un full scan di "tutti" i documenti
     bm25 = BM25Retriever.from_documents(bm25_documents)
     bm25.k = 10
     
@@ -176,17 +181,28 @@ def retrieve_context(query: str,filter: dict = None):
     
     fused_docs = reciprocal_rank_fusion(
         [dense_docs, sparse_docs]
-    )[:5]
+    )# )[:5]
     
     #retrieved_docs = vector_store.similarity_search(query, k=4,filter={"$and":[{"section_header":"Periodi e orari di apertura"},{"$or":[{"resource_types":"Attivita_Degustazioni"},{"resource_types":"Shopping_Cibo_e_vino"}]}]})
     #print(f"\n\nRetrieved DEBUG{(retrieved_docs)} documents.\n\n")
+    client = NVIDIARerank(
+        model="nv-rerank-qa-mistral-4b:1", 
+        # api_key=os.getenv("NVIDIA_API_KEY"),
+        )
+
+    response = client.compress_documents(
+        query=query,
+        # documents=[Document(page_content=passage) for passage in fused_docs],
+        documents=fused_docs,
+        )[:5]
+    # print(response)
     
     serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}")
-        for doc in fused_docs
+        for doc in response
     )
 
-    return serialized, fused_docs
+    return serialized, response
 
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain.messages import SystemMessage
