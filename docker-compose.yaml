@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: pgvector-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mydb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:3.8.3
+    container_name: valhalla-service
+    restart: always
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./valhalla_data:/custom_files
+    environment:
+      # Scarica la mappa della Sicilia (Islands) in automatico da Geofabrik
+      - tile_urls=https://download.geofabrik.de/europe/italy/isole-latest.osm.pbf
+      # Mantiene i file nella cartella locale
+      - force_rebuild=false
+volumes:
+  pgdata:
+    external: true
+    name: my-ai-app_pgdata # es. langchain_project_prova_pgdata
