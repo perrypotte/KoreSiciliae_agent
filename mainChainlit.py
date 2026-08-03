@@ -246,7 +246,12 @@ Non menzionare mai esplicitamente il profilo all'utente.
 
 # Create the agent with a model and tools
 agent = create_agent(
-    model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b"),
+    model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b",
+                    temperature=0.3, #default 1
+                    top_p=0.5,
+                    max_tokens=2500, #default 16384
+                    reasoning_budget=2500, #default 16384
+                    chat_template_kwargs={"enable_thinking":True}),
     tools=[retrieve_context],
     middleware=[
         ProfileMiddleware()
@@ -413,6 +418,7 @@ Non produrre mai:
 
 La risposta finale deve contenere solo il testo destinato all'utente, senza essere troncata.
 """
+
 )
 
 @cl.on_chat_start
