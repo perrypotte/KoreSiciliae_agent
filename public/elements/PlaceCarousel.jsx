@@ -44,6 +44,33 @@ export default function PlaceCarousel() {
         }
     };
 
+    const handleInfoPlace = async (place) => {
+
+        console.log("➡️ Pulsante cliccato per:", place.title);
+
+        try {
+            // Cerca callAction nello scope globale di Chainlit o fallback su window
+            const sendAction = typeof callAction !== "undefined" ? callAction : window.callAction;
+
+            if (sendAction) {
+                console.log("🚀 Invocazione action 'agent_info_place'...");
+                
+                await sendAction({
+                    name: "agent_info_place",
+                    payload: {
+                        id: place.id,
+                    }
+                });
+
+                console.log("✅ Action inviata a Chainlit con successo!");
+            } else {
+                console.error("❌ ERRORE: callAction non trovata nello scope!");
+            }
+        } catch (error) {
+            console.error("❌ ERRORE durante callAction:", error);
+        }
+    };
+
     return (
         <div
             style={{
@@ -105,6 +132,27 @@ export default function PlaceCarousel() {
                             return <p>🛏️ {minutes} min da alloggio</p>;
                         })()}
                         <p>⏱️ {place.visit_duration || "N/D"}</p>
+                        
+                        <button
+                                onClick={() =>
+                                    handleInfoPlace(place)
+                                }
+                                style={{
+                                    flex: "0 0 42px",
+                                    width: "100%",
+                                    padding: "8px 0",
+                                    borderRadius: "6px",
+                                    backgroundColor: "#6B7280",
+                                    color: "#fff",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    fontWeight: "600",
+                                    fontSize: "16px"
+                                }}
+                                title="Informazioni"
+                            >
+                                ℹ️Info
+                            </button>
 
                         <button
                             onClick={() => handleAddPlace(place)}

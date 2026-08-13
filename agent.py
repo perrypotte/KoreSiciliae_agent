@@ -41,6 +41,15 @@ sparse_retriever = SparseRetriever(
     collection_id=os.getenv('COLLECTION_ID', 'a8d572b6-ac8b-4d21-9132-6d2c808e2d6a')
 )
 
+
+@tool()
+def get_place_info(document_id:str):
+    """Ottiene i dettagli di una singola risorsa/luogo
+Args:
+document_id (str): ID univoco del documento di cui si vuole recuperare i dettagli."""
+    document=vector_store.similarity_search(query="prova",k=1,filter={"document_id":document_id})
+    return document
+
 @tool()
 def add_place_to_itinerary(document_id: str, place_name: str,visit_duration: float,travel_time: float=0.0,travel_time_to_accomodation: float=0.0):
     """Aggiunge un luogo selezionato all'itinerario dell'utente per un giorno specifico.
@@ -74,10 +83,12 @@ Questo accade sotto richiesta dell'utente oppure quando il tempo rimanente per i
     if state.get("current_day") is not None:
         state["current_day"] += 1
         state["remaining_time"] = state.get("Daily_hours", 0)
-        state["ending_place"]=state["starting_place"]
-        state["starting_place"]=geocode_address("Enna")
+        state["starting_place"]=state["ending_place"]
         cl.user_session.set("state", state)
-        return f"Giorno {state['current_day'] - 1} completato. Passando al giorno {state['current_day']}. Ricorda all'utente di specificare il luogo con indirizzo dove terminerà la giornata se necessario (Hotel, B&B,ecc...)"
+        #DEBUG
+        tool_message=f"Giorno {state['current_day'] - 1} completato. Passando al giorno {state['current_day']}. Ricorda all'utente di specificare il luogo con indirizzo dove terminerà la giornata se necessario (Hotel, B&B,ecc...)"
+        print(tool_message)
+        return tool_message
     else:
         return "Errore: Giorno corrente non impostato."
 
@@ -90,8 +101,8 @@ transport (str): Mezzo di trasporto preferito tra auto e camminare a piedi ("aut
 Max_distance_km (float): Raggio massimo di ricerca in chilometri.
 Daily_hours (float): Ore giornaliere disponibili per le attività.
 current_day (int): Giorno corrente dell'itinerario.
-starting_place (str): Luogo da cui parte la giornata (Es. Stazione centrale di Enna).
-ending_place (str): Luoco in cui termina la giornata (Es. Via esempio 17, Enna)."""
+starting_place (str): Luogo da cui parte la prima giornata (Es. Stazione centrale di Enna).
+ending_place (str): Luoco in cui termina la giornata corrente (Es. Via esempio 17, Enna)."""
 
     cl.user_session.set("state", {
         "planning_mode": True,
@@ -190,7 +201,10 @@ def search_places(query: str,filter: dict = None):
     # 2. Recuperiamo il punto di partenza della prossima tratta
     # ============================================================
     selected_places = cl.user_session.get("state",{}).get("Selected_places")
-    if selected_places:
+    current_day=cl.user_session.get("state",{}).get("current_day")
+    print(f"Current day {current_day}\n")
+    print(f"Last place day: {selected_places[-1].get("day")}") if selected_places else None
+    if selected_places and current_day==selected_places[-1].get("day"):
         # Abbiamo già selezionato almeno un luogo:
         # la posizione corrente è l'ultimo luogo selezionato.
         last_selected = selected_places[-1]
@@ -222,7 +236,7 @@ def search_places(query: str,filter: dict = None):
     # ============================================================
     current_to_candidates = {}
     transport=cl.user_session.get("state", {}).get("transport")
-    if selected_places:
+    if selected_places and current_day==selected_places[-1].get("day"):
 
         # --------------------------------------------------------
         # CASO NORMALE:
@@ -485,13 +499,17 @@ def search_places(query: str,filter: dict = None):
         filtered_docs.append(doc)
 
 
-        reranked_fused_docs = filtered_docs
+    reranked_fused_docs = filtered_docs
 
+    #DEBUG
+    print(f"documenti: {len(reranked_fused_docs)}")
+    #TODO: Caso semplificato, documenti non compatibili ai vincoli di pianificazione
+    if(len(reranked_fused_docs)==0):
+        return ("Non sono presenti documenti che rispettano la distanza o i limiti di tempo insieme ai luoghi di arrivo e partenza dell'utente. Proponi all'utente di estendere la distanza massima", [])
     serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}")
         for doc in reranked_fused_docs
     )
-
     return serialized, reranked_fused_docs
 
 # Create the agent with a model and tools
@@ -502,31 +520,34 @@ agent = create_agent(
                     max_tokens=2500, #default 16384
                     reasoning_budget=400, #default 16384
                     chat_template_kwargs={"enable_thinking":True}),
-    tools=[search_places, add_place_to_itinerary, update_planning_constraints, finish_day],
+    tools=[search_places, add_place_to_itinerary, update_planning_constraints, finish_day,get_place_info],
     middleware=[
         ProfileMiddleware()
     ],
     #TODO Aggiungere Altro tra le resource types possibili
     system_prompt = """
-Sei un semplice assistente virtuale che può attingere da una Knowledge Base basata su luoghi e attività nel territorio di Enna, le cui informazioni sull'utente saranno aggiornate dinamicamente durante la conversazione.
-Fornisci le informazioni sull'utente se disponibili sotto richiesta.
-
-Se l'utente chiede informazioni generiche su luoghi, utilizza il tool di ricerca per trovare documenti pertinenti anche utilizzando le preferenze dell'utente.
-
-Osserva lo stato della conversazione, se l'utente chiede di voler creare un itinerario in base a questo chiedi all'utente le informazioni mancanti nello stato.
-Informa l'utente sulla possibilità di indicare indirizzo per la partenza e per la fine della giornata anche se opzionale, se non indicato distanze e tempi partiranno e finiranno dal centro di Enna.
-Quando l'utente ha fornito le informazioni riguardanti i vincoli di pianificazione, aggiorna lo stato IMMEDIATAMENTE con il tool update_planning_constraints e dopo verifica se mancano altre informazioni.
-Osserva le preferenze dell'utente e assicurati che l'utente esprima le sue preferenze prima di procedere con la creazione del'itinerario.
-Una volta che l'utente ha espresso le sue preferenze e vincoli avendo richiesto la creazione dell'itinerario procedi a proporre luoghi in base alle preferenze utilizzando una query in linguaggio naturale e concisa
-e filtro tipo {"resource_types": ["Attivita_Degustazioni", "Attrazioni_Musei_e_mostre"]} per il tool di ricerca.
-
-Quando l'utente chiede di aggiungere un luogo all'itinerario, utilizza il tool add_place_to_itinerary con i parametri corretti.
-Quando l'utente chiede di terminare il giorno corrente, utilizza il tool finish_day e procedi con le prossime attività.
-
-Una volta che l'utente ha selezionato almeno un luogo, avrai accesso alle informazioni di distanza e tempo di percorrenza tra i luoghi selezionati e quelli proposti dal tool di ricerca.
-In questo caso può capitare che non ci siano luoghi proposti dal tool di ricerca che rispettino i vincoli di distanza e tempo rimanente per il giorno corrente. Avverti l'utente di questa situazione nel caso accada.
-
-Quando dai l'output finale e quando ragioni sii conciso e diretto, non aggiungere spiegazioni o dettagli inutili. Non inventare informazioni, se non sei sicuro di qualcosa, ammettilo chiaramente.
+Sei un semplice assistente virtuale che può attingere da una Knowledge Base basata su luoghi e attività nel territorio di Enna.
+Le informazioni sull'utente vengono aggiornate dinamicamente durante la conversazione.
+Fornisci informazioni sull'utente esclusivamente se disponibili nello stato della conversazione e se richieste esplicitamente.
+Quando l'utente chiede informazioni generiche su luoghi o attività, utilizza il tool search_places per trovare documenti pertinenti.
+Quando utile, considera anche le preferenze dell'utente presenti nello stato della conversazione.
+Quando l'utente manifesta la volontà di creare un itinerario, osserva lo STATO DELLA CONVERSAZIONE e chiedi esclusivamente le informazioni mancanti necessarie alla pianificazione.
+Informa l'utente che può indicare opzionalmente un indirizzo di partenza e un indirizzo per la fine della giornata. Se non vengono indicati, considera il centro di Enna come punto di partenza e come punto di arrivo della giornata.
+Quando l'utente fornisce informazioni relative ai vincoli di pianificazione, aggiorna IMMEDIATAMENTE lo stato utilizzando il tool update_planning_constraints. Dopo l'aggiornamento, verifica nuovamente lo stato e chiedi eventuali informazioni ancora mancanti.
+L'utente può successivamente modificare i singoli vincoli di pianificazione (STATO DELLA CONVERSAZIONE), se la pianificazione è già attiva allora l'utente può modificare un singolo valore.
+Prima di procedere con la creazione dell'itinerario, assicurati che l'utente abbia espresso le proprie preferenze. Le preferenze dell'utente corrispondono ai tag/categorie delle attività che considera interessanti.
+Quando l'utente ha espresso le proprie preferenze e tutti i vincoli necessari sono disponibili, utilizza search_places per proporre luoghi pertinenti.
+Formula una query breve in linguaggio naturale, semanticamente utile e coerente con le preferenze dell'utente. Utilizza inoltre un filtro resource_types coerente con le categorie delle preferenze, ad esempio {"resource_types": ["Attivita_Degustazioni", "Attrazioni_Musei_e_mostre"]}.
+Quando search_places restituisce pochi risultati (il massimo è 10) prova 1-2 volte a cambiare la query rimanendo sempre sul tema corrente riguardo le categorie e le preferenze, dopo di ciò se le proposte rimangono sempre poche proponi all'utente di chiedere esplicitamente cosa vorrebbe fare o cambiare i vincoli di pianificazione. 
+Quando l'utente chiede di aggiungere un luogo all'itinerario, utilizza il tool add_place_to_itinerary con tutti i parametri corretti disponibili.
+Quando l'utente chiede di terminare il giorno corrente, utilizza il tool finish_day e procedi con la pianificazione delle attività del giorno successivo.
+Dopo che l'utente ha selezionato almeno un luogo, saranno disponibili informazioni relative a distanza e tempo di percorrenza tra i luoghi selezionati e quelli proposti da search_places. Utilizza queste informazioni per verificare la compatibilità delle proposte con il tempo rimanente e con i vincoli di distanza e tempo dell'itinerario.
+Se nessuno dei luoghi restituiti da search_places rispetta i vincoli di distanza o il tempo rimanente per il giorno corrente, informa brevemente l'utente della situazione. Non inventare mai distanze, tempi o altre informazioni.
+Quando mostri all'utente l'output derivato da search_places, lascia descrivere l'output all'interfaccia grafica: non fare l'elenco dei documenti ottenuti dal tool perché sarà l'interfaccia grafica a mostrarli all'utente. L'utente potrà utilizzare i pulsanti dell'interfaccia per aggiungere una proposta all'itinerario o richiedere informazioni su un luogo specifico.
+Puoi invece mostrare un breve riepilogo dello stato dell'itinerario in corso.
+Quando l'utente richiede informazioni specifiche su un luogo, utilizza esclusivamente le informazioni disponibili nella Knowledge Base e nei tool. Non inventare informazioni mancanti.
+In ogni fase osserva lo STATO DELLA CONVERSAZIONE e non chiedere nuovamente informazioni già disponibili.
+Quando ragioni o rispondi, sii conciso, diretto e schematico. Non aggiungere spiegazioni o dettagli inutili. Non inventare informazioni e, se non sei sicuro di qualcosa, ammettilo chiaramente.
 """
 )
 
@@ -565,6 +586,23 @@ Inoltre posso anche aiutarti a creare un itinerario di viaggio.
     ).send()
 
 
+@cl.action_callback("agent_info_place")
+async def ui_bridge_get_place_info(action: cl.Action):
+    place_document_id=action.payload.get("id")
+    messages = cl.user_session.get("messages", {"messages": []})
+    history = messages["messages"]
+    # Costruisci l'istruzione per l'agente
+    prompt = f"Recupera informazioni sul documento con Id=\"{place_document_id}\""
+    inputs = {
+            "messages": [
+                {"role": "user", "content": prompt},
+            ]
+        }
+    # Esegue la stessa identica pipeline di streaming dell'agente!
+    # MEMO: tolto dai file di traduzione il prefisso: "Utilizzato"
+    async with cl.Step("Recupero informazioni..."):
+        await run_agent_pipeline(inputs,history)
+
 @cl.action_callback("agent_add_place")
 async def ui_bridge_add_place(action: cl.Action):
     place_title = action.payload.get("title")
@@ -591,7 +629,7 @@ async def run_agent_pipeline(inputs: dict,history: list):
     messages = cl.user_session.get("messages", {"messages": []})
     msg = cl.Message(content="")
     has_streamed_tokens = False
-
+    has_documents=False
     async for message_chunk, metadata in agent.astream(
         inputs,
         stream_mode="messages" #Per lo streaming dei token in tempo reale
@@ -613,6 +651,7 @@ async def run_agent_pipeline(inputs: dict,history: list):
             
             if docs and isinstance(docs, list):
                 if message_chunk.name == "search_places":
+                    has_documents=True
                     places = []
                     for doc in docs:
                         md = doc.metadata
@@ -639,10 +678,7 @@ async def run_agent_pipeline(inputs: dict,history: list):
                         )
 
 
-                    await cl.Message(
-                            content="",
-                            elements=[element]
-                        ).send()
+                    
 
                 # Old presentation of retrieved documents in the chat, now replaced by cards
                 # else:
@@ -683,6 +719,11 @@ async def run_agent_pipeline(inputs: dict,history: list):
         history.append(AIMessage(content=msg.content))
         messages["messages"] = history
         cl.user_session.set("messages", messages)
+        if has_documents:
+            await cl.Message(
+                            content="",
+                            elements=[element]
+                            ).send()
 
 
 
