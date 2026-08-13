@@ -132,6 +132,18 @@ export default function PlaceCarousel() {
                             return <p>🛏️ {minutes} min da alloggio</p>;
                         })()}
                         <p>⏱️ {place.visit_duration || "N/D"}</p>
+                        {place.url && (
+                                        <p>
+                                            🔗{" "}
+                                            <a
+                                                href={place.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                            >
+                                                Sito web
+                                            </a>
+                                        </p>
+                                    )}
                         
                         <button
                                 onClick={() =>

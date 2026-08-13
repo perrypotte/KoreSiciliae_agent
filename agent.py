@@ -31,7 +31,7 @@ embeddings = NVIDIAEmbeddings(model="nvidia/nv-embed-v1")
 
 vector_store = PGVector(
     embeddings=embeddings,
-    collection_name="koreSiciliae_resources_v5",
+    collection_name="koreSiciliae_resources_v6",
     connection=os.getenv("DATABASE2_URL"),
 )
 
@@ -502,7 +502,8 @@ def search_places(query: str,filter: dict = None):
     reranked_fused_docs = filtered_docs
 
     #DEBUG
-    print(f"documenti: {len(reranked_fused_docs)}")
+    #print(reranked_fused_docs[0])
+    #print(f"documenti: {len(reranked_fused_docs)}")
     #TODO: Caso semplificato, documenti non compatibili ai vincoli di pianificazione
     if(len(reranked_fused_docs)==0):
         return ("Non sono presenti documenti che rispettano la distanza o i limiti di tempo insieme ai luoghi di arrivo e partenza dell'utente. Proponi all'utente di estendere la distanza massima", [])
@@ -660,7 +661,8 @@ async def run_agent_pipeline(inputs: dict,history: list):
                                 "id": md["document_id"],
                                 "title": md.get("title", "Senza titolo"),
                                 #"image": md.get("image"),
-                                "image": "https://console.koresiciliae.it/images/resources/a96aad1b-821e-40ce-a99a-c4ddc6ae24d3.jpg",
+                                "image": md["image_url"],
+                                "url":md["official_url"] if md["official_url"]!="" else md["url"],
                                 #"category": ", ".join(md.get("resource_types", [])),
                                 "distance": md.get("distance_km_from_last_selected"),
                                 "travel_time": md.get("travel_time_hours_from_last_selected"),
