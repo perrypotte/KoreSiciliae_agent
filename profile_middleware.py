@@ -33,6 +33,10 @@ PROFILO UTENTE:
 
 Usa queste informazioni solo se rilevanti per la richiesta corrente.
 Non menzionare mai esplicitamente il profilo all'utente.
+
+CRONOLOGIA CONVERSAZIONE:
+
+{messages}
 """
 
         new_content = list(request.system_message.content_blocks)

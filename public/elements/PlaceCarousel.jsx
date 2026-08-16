@@ -2,14 +2,21 @@ import React, { useState } from "react";
 
 export default function PlaceCarousel() {
     const places = props.places || [];
+
+    // Usa un'chiave univoca basata sull'ID dell'elemento inviato da Python
+    const storageKey = `carousel_locked_${props.elementId}`;
     
-    const [isLocked, setIsLocked] = useState(false);
+    // Inizializza lo stato leggendo dallo storage della pagina
+    const [isLocked, setIsLocked] = useState(() => {
+    return sessionStorage.getItem(storageKey) === "true";
+    });
     const [selectedId, setSelectedId] = useState(null);
 
     const handleAddPlace = async (place) => {
         if (isLocked) return;
 
         setIsLocked(true);
+        sessionStorage.setItem(storageKey, "true"); // Salva il blocco
         setSelectedId(place.id);
 
         console.log("➡️ Pulsante cliccato per:", place.title);
@@ -111,7 +118,7 @@ export default function PlaceCarousel() {
                         )}
 
                         <h3 style={{ margin: "8px 0", fontWeight: "bold" }}>
-                            {place.title}
+                            {place.title || "Nome non disponibile"}
                         </h3>
 
                         {/*togliere anche le graffe poi <p>🏷️ {place.category || "N/D"}</p>*/}
@@ -166,28 +173,30 @@ export default function PlaceCarousel() {
                                 ℹ️Info
                             </button>
 
-                        <button
-                            onClick={() => handleAddPlace(place)}
-                            disabled={isLocked}
-                            style={{
-                                marginTop: "8px",
-                                width: "100%",
-                                padding: "8px 12px",
-                                borderRadius: "6px",
-                                backgroundColor: isThisSelected 
-                                    ? "#10B981" 
-                                    : (isLocked ? "#D1D5DB" : "#0070f3"),
-                                color: isLocked && !isThisSelected ? "#6B7280" : "#fff",
-                                border: "none",
-                                cursor: isLocked ? "not-allowed" : "pointer",
-                                fontWeight: "600",
-                                transition: "all 0.2s ease"
-                            }}
-                        >
-                            {isThisSelected 
-                                ? "✓ Selezionato" 
-                                : (isLocked ? "Non disponibile" : "+ Aggiungi")}
-                        </button>
+                        {place.planning === true && (
+                            <button
+                                onClick={() => handleAddPlace(place)}
+                                disabled={isLocked}
+                                style={{
+                                    marginTop: "8px",
+                                    width: "100%",
+                                    padding: "8px 12px",
+                                    borderRadius: "6px",
+                                    backgroundColor: isThisSelected 
+                                        ? "#10B981" 
+                                        : (isLocked ? "#D1D5DB" : "#0070f3"),
+                                    color: isLocked && !isThisSelected ? "#6B7280" : "#fff",
+                                    border: "none",
+                                    cursor: isLocked ? "not-allowed" : "pointer",
+                                    fontWeight: "600",
+                                    transition: "all 0.2s ease"
+                                }}
+                            >
+                                {isThisSelected 
+                                    ? "✓ Selezionato" 
+                                    : (isLocked ? "Non disponibile" : "+ Aggiungi")}
+                            </button>
+                        )}
                     </div>
                 );
             })}

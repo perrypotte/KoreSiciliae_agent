@@ -1,7 +1,8 @@
 import json
 import os
-import textwrap
+from pathlib import Path
 from typing import Literal
+import uuid
 import chainlit as cl
 from dotenv import load_dotenv
 from langchain.agents import create_agent
@@ -12,7 +13,7 @@ from langchain_postgres import PGVector
 import getpass
 from profile_middleware import ProfileMiddleware
 from sparse_retriever import SparseRetriever
-from route_matrix_repository import RouteMatrixRepository, RouteMatrixEntry
+from route_matrix_repository import RouteMatrixRepository
 from geocoding import geocode_address
 from valhalla_tool import calculate_routes, calculate_routes_matrix
 
@@ -41,6 +42,12 @@ sparse_retriever = SparseRetriever(
     collection_id=os.getenv('COLLECTION_ID', 'a8d572b6-ac8b-4d21-9132-6d2c808e2d6a')
 )
 
+
+def load_prompt(filename: str) -> str:
+    return Path(f"prompts/{filename}").read_text(encoding="utf-8")
+
+system_prompt = load_prompt("agent.txt")
+profile_updater_sys_prompt=load_prompt("profile_updater.txt")
 
 @tool()
 def get_place_info(document_id:str):
@@ -98,7 +105,7 @@ def update_planning_constraints(days: int, transport: Literal["auto", "pedestria
 Args:
 days (int): Numero di giorni per il viaggio.
 transport (str): Mezzo di trasporto preferito tra auto e camminare a piedi ("auto" o "pedestrian").
-Max_distance_km (float): Raggio massimo di ricerca in chilometri.
+Max_distance_km (float): Distanza massima tra un luogo e l'altro (consigliato in auto 70km).
 Daily_hours (float): Ore giornaliere disponibili per le attività.
 current_day (int): Giorno corrente dell'itinerario.
 starting_place (str): Luogo da cui parte la prima giornata (Es. Stazione centrale di Enna).
@@ -150,7 +157,7 @@ def build_filter(f):
 
 @tool(response_format="content_and_artifact")
 def search_places(query: str,filter: dict = None):
-    """Retrieve information to help user find places to insert into their itinerary."""
+    """Ricava informazioni per aiutare l'utente a trovare luoghi da inserire nel proprio itinerario"""
     print("Raw filter input:", filter)
     raw_filter = filter
     filter=build_filter(filter) if filter else {}
@@ -185,6 +192,12 @@ def search_places(query: str,filter: dict = None):
         )
     # print(len(reranked_fused_docs))
 
+    if cl.user_session.get("state",{}).get("planning_mode")==False:
+        serialized = "\n\n".join(
+                (f"Source: {doc.metadata}\nContent: {doc.page_content}")
+                for doc in reranked_fused_docs
+            )
+        return serialized, reranked_fused_docs
    # ============================================================
    # 1. Recuperiamo gli ID dei candidati
    # ============================================================
@@ -495,6 +508,7 @@ def search_places(query: str,filter: dict = None):
 
         doc.metadata["visit_duration_hours"] = visit_duration
 
+        doc.metadata["planning"]=True
 
         filtered_docs.append(doc)
 
@@ -516,8 +530,8 @@ def search_places(query: str,filter: dict = None):
 # Create the agent with a model and tools
 agent = create_agent(
     model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b",
-                    temperature=0.3, #default 1 basso per determinismo (modifica la distribuzione di probabilità delle parole successive)
-                    top_p=0.5, #default 0.95, considera solo le parole la cui somma delle probabilità è >= a top_p 
+                    temperature=0.2, #default 1 basso per determinismo (modifica la distribuzione di probabilità delle parole successive)
+                    top_p=0.4, #default 0.95, considera solo le parole la cui somma delle probabilità è >= a top_p 
                     max_tokens=2500, #default 16384
                     reasoning_budget=400, #default 16384
                     chat_template_kwargs={"enable_thinking":True}),
@@ -526,30 +540,7 @@ agent = create_agent(
         ProfileMiddleware()
     ],
     #TODO Aggiungere Altro tra le resource types possibili
-    system_prompt = """
-Sei un semplice assistente virtuale che può attingere da una Knowledge Base basata su luoghi e attività nel territorio di Enna.
-Le informazioni sull'utente vengono aggiornate dinamicamente durante la conversazione.
-Fornisci informazioni sull'utente esclusivamente se disponibili nello stato della conversazione e se richieste esplicitamente.
-Quando l'utente chiede informazioni generiche su luoghi o attività, utilizza il tool search_places per trovare documenti pertinenti.
-Quando utile, considera anche le preferenze dell'utente presenti nello stato della conversazione.
-Quando l'utente manifesta la volontà di creare un itinerario, osserva lo STATO DELLA CONVERSAZIONE e chiedi esclusivamente le informazioni mancanti necessarie alla pianificazione.
-Informa l'utente che può indicare opzionalmente un indirizzo di partenza e un indirizzo per la fine della giornata. Se non vengono indicati, considera il centro di Enna come punto di partenza e come punto di arrivo della giornata.
-Quando l'utente fornisce informazioni relative ai vincoli di pianificazione, aggiorna IMMEDIATAMENTE lo stato utilizzando il tool update_planning_constraints. Dopo l'aggiornamento, verifica nuovamente lo stato e chiedi eventuali informazioni ancora mancanti.
-L'utente può successivamente modificare i singoli vincoli di pianificazione (STATO DELLA CONVERSAZIONE), se la pianificazione è già attiva allora l'utente può modificare un singolo valore.
-Prima di procedere con la creazione dell'itinerario, assicurati che l'utente abbia espresso le proprie preferenze. Le preferenze dell'utente corrispondono ai tag/categorie delle attività che considera interessanti.
-Quando l'utente ha espresso le proprie preferenze e tutti i vincoli necessari sono disponibili, utilizza search_places per proporre luoghi pertinenti.
-Formula una query breve in linguaggio naturale, semanticamente utile e coerente con le preferenze dell'utente. Utilizza inoltre un filtro resource_types coerente con le categorie delle preferenze, ad esempio {"resource_types": ["Attivita_Degustazioni", "Attrazioni_Musei_e_mostre"]}.
-Quando search_places restituisce pochi risultati (il massimo è 10) prova 1-2 volte a cambiare la query rimanendo sempre sul tema corrente riguardo le categorie e le preferenze, dopo di ciò se le proposte rimangono sempre poche proponi all'utente di chiedere esplicitamente cosa vorrebbe fare o cambiare i vincoli di pianificazione. 
-Quando l'utente chiede di aggiungere un luogo all'itinerario, utilizza il tool add_place_to_itinerary con tutti i parametri corretti disponibili.
-Quando l'utente chiede di terminare il giorno corrente, utilizza il tool finish_day e procedi con la pianificazione delle attività del giorno successivo.
-Dopo che l'utente ha selezionato almeno un luogo, saranno disponibili informazioni relative a distanza e tempo di percorrenza tra i luoghi selezionati e quelli proposti da search_places. Utilizza queste informazioni per verificare la compatibilità delle proposte con il tempo rimanente e con i vincoli di distanza e tempo dell'itinerario.
-Se nessuno dei luoghi restituiti da search_places rispetta i vincoli di distanza o il tempo rimanente per il giorno corrente, informa brevemente l'utente della situazione. Non inventare mai distanze, tempi o altre informazioni.
-Quando mostri all'utente l'output derivato da search_places, lascia descrivere l'output all'interfaccia grafica: non fare l'elenco dei documenti ottenuti dal tool perché sarà l'interfaccia grafica a mostrarli all'utente. L'utente potrà utilizzare i pulsanti dell'interfaccia per aggiungere una proposta all'itinerario o richiedere informazioni su un luogo specifico.
-Puoi invece mostrare un breve riepilogo dello stato dell'itinerario in corso.
-Quando l'utente richiede informazioni specifiche su un luogo, utilizza esclusivamente le informazioni disponibili nella Knowledge Base e nei tool. Non inventare informazioni mancanti.
-In ogni fase osserva lo STATO DELLA CONVERSAZIONE e non chiedere nuovamente informazioni già disponibili.
-Quando ragioni o rispondi, sii conciso, diretto e schematico. Non aggiungere spiegazioni o dettagli inutili. Non inventare informazioni e, se non sei sicuro di qualcosa, ammettilo chiaramente.
-"""
+    system_prompt =system_prompt
 )
 
 @cl.on_chat_start
@@ -579,10 +570,24 @@ async def start():
     #TODO: streammare il messaggio di benvenuto in tempo reale
     await cl.Message(
         AIMessage(
-            content=f"""Ciao! Sono il tuo assistente virtuale per la base di conoscenza di Kore Siciliae.
-Posso aiutarti a trovare informazioni su luoghi, attrazioni, attività, esperienze e negozi.
-Inoltre posso anche aiutarti a creare un itinerario di viaggio.
-### PRIMO PASSO: Inserisci le tue preferenze e interessi.""",
+            content=f"""Ciao! 👋 Sono il tuo assistente per scoprire Enna e il suo territorio.
+
+Posso aiutarti a:
+
+🔎 trovare luoghi, attrazioni e attività in base ai tuoi interessi;
+🍽️ proporti esperienze e attività coerenti con le tue preferenze;
+🗺️ creare un itinerario personalizzato, organizzato giorno per giorno;
+📍 tenere conto di distanze, tempi di percorrenza e tempo disponibile;
+🏁 considerare, se vuoi, un indirizzo di partenza e un punto di arrivo della giornata;
+ℹ️ darti informazioni specifiche sui luoghi presenti nella mia base di conoscenza.
+
+Per iniziare a creare un itinerario, ti chiederò solo le informazioni necessarie, come quanti giorni hai a disposizione, i tuoi interessi e i tuoi vincoli di spostamento.
+
+Se non indichi un punto di partenza o di arrivo, utilizzerò il centro di Enna come riferimento.
+
+Durante la pianificazione potrai anche modificare i tuoi vincoli, aggiungere o rimuovere le attività e decidere passo dopo passo cosa inserire nell'itinerario.
+
+Dimmi semplicemente cosa ti piacerebbe fare o scoprire a Enna e iniziamo!""",
         ).content
     ).send()
 
@@ -656,7 +661,8 @@ async def run_agent_pipeline(inputs: dict,history: list):
                     places = []
                     for doc in docs:
                         md = doc.metadata
-
+                        # Genera un ID univoco per QUESTA risposta/carosello
+                        carousel_id = f"carousel_{uuid.uuid4().hex[:8]}"
                         places.append({
                                 "id": md["document_id"],
                                 "title": md.get("title", "Senza titolo"),
@@ -668,14 +674,16 @@ async def run_agent_pipeline(inputs: dict,history: list):
                                 "travel_time": md.get("travel_time_hours_from_last_selected"),
                                 #"distance_km_to_final_destination":md.get("distance_km_to_final_destination"),
                                 "travel_time_hours_to_final_destination":md.get("travel_time_hours_to_final_destination"),
-                                "visit_duration": md.get("visit_duration")
+                                "visit_duration": md.get("visit_duration"),
+                                "planning":md.get("planning")
                             })
 
 
                         element = cl.CustomElement(
                             name="PlaceCarousel",
                             props={
-                                "places": places
+                                "places": places,
+                                "elementId": carousel_id # <--- ID UNIVOCO PER MESSAGGIO
                             }
                         )
 
@@ -753,116 +761,17 @@ async def main(message: cl.Message):
     # }
 
     #TODO: ogni tanto pacca l'output non so perché
-    model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b", temperature=0,top_p=0.95,chat_template_kwargs={"enable_thinking":False})
+    model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b", temperature=0,top_p=0.20,chat_template_kwargs={"enable_thinking":False})
     conversation = [
-    {"role": "system", "content": """Sei un Profile Updater.
-
-Il tuo unico compito è mantenere aggiornato il profilo temporaneo della conversazione.
-
-Riceverai sempre:
-
-- il profilo corrente della conversazione;
-- l'ultimo messaggio dell'utente.
-
-Il profilo rappresenta esclusivamente le preferenze espresse durante questa conversazione e NON deve essere considerato permanente.
-
-Il profilo ha il seguente formato:
-
-{
-    "preferred_resource_types": [
-        ...
-    ]
-}
-
-Le uniche categorie ammesse sono:
-
-- Attivita_Attività_culturali
-- Attivita_Corsi_e_laboratori
-- Attivita_Degustazioni
-- Attivita_Escursioni
-- Attivita_Sport
-- Attivita_Visite_guidate
-- Attrazioni_Castelli_e_fortezze
-- Attrazioni_Giardini_monumentali
-- Attrazioni_Luoghi_di_culto
-- Attrazioni_Musei_e_mostre
-- Attrazioni_Paesaggio_e_natura
-- Attrazioni_Palazzi_e_monumenti
-- Attrazioni_Parchi_e_oasi_naturali
-- Attrazioni_Siti_archeologici
-- Shopping_Artigianato
-- Shopping_Cibo_e_vino
-- Shopping_Gioielli
-
-Devi seguire rigorosamente queste regole.
-
-1. Aggiorna il profilo SOLO quando il messaggio esprime chiaramente una preferenza, un interesse, un gusto oppure una preferenza negativa.
-
-Esempi:
-
-- "Mi piace il vino."
-- "Sono interessato ai musei."
-- "Adoro le degustazioni."
-- "Preferisco le escursioni."
-- "Non mi interessano i castelli."
-
-2. NON modificare il profilo quando il messaggio contiene soltanto una richiesta di informazioni.
-
-Esempi:
-
-- "Parlami del Castello di Lombardia."
-- "Quali musei ci sono?"
-- "A che ora apre il museo?"
-- "Consigliami un ristorante."
-
-Queste NON rappresentano preferenze permanenti della conversazione.
-
-3. Se il messaggio modifica una preferenza precedente, aggiorna il profilo.
-
-Esempio:
-
-Profilo:
-{
-    "preferred_resource_types": [
-        "Shopping_Cibo_e_vino"
-    ]
-}
-
-Messaggio:
-"In realtà preferisco visitare musei."
-
-Nuovo profilo:
-{
-    "preferred_resource_types": [
-        "Attrazioni_Musei_e_mostre"
-    ]
-}
-
-4. Non inventare preferenze.
-
-5. Non dedurre preferenze implicite da una singola domanda.
-
-6. Mantieni il profilo invariato se il messaggio non contiene informazioni utili (riguardanti preferenze esplicite dell'utente).
-
-7. Il profilo deve contenere solo categorie appartenenti all'elenco fornito.
-
-8. Non aggiungere spiegazioni.
-
-9. Restituisci esclusivamente il nuovo profilo o il profilo invariato in formato JSON valido.
-
-10. Non trasformare mai il profilo in una lista di preferenze, ma mantienilo sempre come un oggetto JSON con la chiave "preferred_resource_types".
-
-Nient'altro.
-"""},
-
+    {"role": "system", "content":profile_updater_sys_prompt},
     {
         "role": "user",
         "content": f"""
-PROFILO CORRENTE:
-{json.dumps(cl.user_session.get("preferred_resource_types", {}).get("preferred_resource_types", []), ensure_ascii=False)}
-Ultimo messaggio dell'utente:
-{message.content}.
-"""
+                        PROFILO CORRENTE:
+                        {json.dumps(cl.user_session.get("preferred_resource_types", {}).get("preferred_resource_types", []), ensure_ascii=False)}
+                        Ultimo messaggio dell'utente:
+                        {message.content}.
+                    """
     },
         ]
 
