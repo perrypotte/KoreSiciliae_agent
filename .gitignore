@@ -1,11 +1,7 @@
-main2.py
-requirements.txt
 Dockerfile
 .vscode
 .env
 venv
-*_*old.py
-resources_chunks.json
 __pycache__
 .langgraph_api
 chainlit.md

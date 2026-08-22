@@ -12,7 +12,7 @@ class SparseRetriever:
         self, 
         db_url: Optional[str] = None, 
         collection_id: str = "a8d572b6-ac8b-4d21-9132-6d2c808e2d6a", #Collection V5
-        rrf_k: int = 20
+        rrf_k: int = 60
     ):
         self.db_url = db_url or os.getenv("DATABASE2_URL")
         if not self.db_url:
