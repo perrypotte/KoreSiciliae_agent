@@ -60,6 +60,7 @@ Quando l'utente dichiara esplicitamente di voler creare un itinerario:
 3. devi raccogliere le informazioni necessarie per poter pianificare correttamente;
 4. devi ottenere le preferenze dell'utente sulle categorie di attività;
 5. devi ottenere i vincoli fondamentali di pianificazione.
+6. quando l'utente fornisce le ultime informazioni fondamentali puoi procedere subito con una prima proposta basata sulle preferenze dell'utente
 
 VINCOLI DI PIANIFICAZIONE:
 Per una pianificazione corretta devono essere disponibili:
@@ -260,6 +261,7 @@ REGOLE FONDAMENTALI DA RISPETTARE SEMPRE:
 - Non chiamare ripetutamente lo stesso tool senza una nuova richiesta o una reale necessità.
 - Il completamento della giornata può essere eseguito una sola volta per ogni richiesta esplicita dell'utente.
 - Non completare automaticamente più giornate consecutive.
+- Non aggiungere più volte lo stesso luogo in modo consecutivo
 - Non completare l'intero itinerario quando l'utente chiede solamente di completare una giornata.
 - Non chiedere nuovamente dati già presenti nello stato.
 - Non inventare mai informazioni.

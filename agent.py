@@ -7,6 +7,8 @@ from langchain.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMess
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from profile_middleware import ProfileMiddleware
 from tools import ALL_TOOLS
+from planning_state import PlanningState
+
 
 def load_prompt(filename: str) -> str:
     return Path(f"prompts/{filename}").read_text(encoding="utf-8")
@@ -33,19 +35,7 @@ agent = create_agent(
 
 @cl.on_chat_start
 async def start():
-    state={
-        "planning_mode":False,
-        "days": None,
-        "transport":None,
-        "Max_distance_km":None,
-        "Daily_hours":None,
-        "Selected_places":[],
-        "starting_place":None,
-        "ending_place":None,
-        "current_day":None,
-        "remaining_time":None,
-        # "preferred_resource_types": []
-    }
+    state=PlanningState()
     preferred_resource_types = {
         "preferred_resource_types": []
     }

@@ -2,6 +2,9 @@ from langchain.agents.middleware.types import AgentMiddleware
 from langchain.messages import SystemMessage
 from langchain.agents.middleware import ModelRequest, ModelResponse
 import chainlit as cl
+from planning_state import PlanningState
+
+
 
 class ProfileMiddleware(AgentMiddleware):
 
@@ -11,23 +14,15 @@ class ProfileMiddleware(AgentMiddleware):
         handler
     ) -> ModelResponse:
 
-        state = cl.user_session.get("state", {
-            "planning_mode": False,
-            "days": None,
-            "transport": None,
-            "Max_distance_km": None,
-            "Daily_hours": None,
-            "Selected_places": [],
-            "current_day": None,
-            "remaining_time": None
-        })
+        state = cl.user_session.get("state", PlanningState())
+        print("DEBUG - MIDDLEWARE: "+state.to_prompt())
         profile = cl.user_session.get("preferred_resource_types",{"preferred_resource_types":[]})
         messages = cl.user_session.get("messages",{"messages":[]})
         profile_text = f"""
-STATO CONVERSAZIONE:
-{state}
+STATO PIANIFICAZIONE ITINERARIO:
+{state.to_prompt()}
 
-PROFILO UTENTE:
+PREFERENZE UTENTE:
 
 {profile}
 

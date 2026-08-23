@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings, NVIDIARerank
 from langchain_postgres import PGVector
 from typing import Literal
+from planning_state import PlanningState
 
 load_dotenv()
 
@@ -33,8 +34,11 @@ sparse_retriever = SparseRetriever(
 
 def build_filter(f):
     conditions = []
+    excluded_document_ids=cl.user_session.get("state").get_selected_places_ids()
 
-    if "resource_types" in f:
+
+    # 1. Filtro su resource_types
+    if "resource_types" in f and f["resource_types"]:
         conditions.append({
             "$or": [
                 {"resource_types": v}
@@ -42,6 +46,13 @@ def build_filter(f):
             ]
         })
 
+    #TODO al momento non puoi mettere lo stesso luogo, anche in giorni diversi
+    # 2. Filtro per escludere i document_id ($ne) 
+    if excluded_document_ids:
+        for doc_id in excluded_document_ids:
+            conditions.append({"document_id": {"$ne": doc_id}})
+
+    # Ritorno coerente in base al numero di condizioni
     if len(conditions) == 0:
         return {}
 
@@ -53,11 +64,16 @@ def build_filter(f):
 ############## TOOLS ################################
 
 @tool()
-def get_place_info(document_id:str):
+def get_place_info(document_id:str=None, title:str=None):
     """Ottiene i dettagli di una singola risorsa/luogo
 Args:
-document_id (str): ID univoco del documento di cui si vuole recuperare i dettagli."""
-    document=vector_store.similarity_search(query="prova",k=1,filter={"document_id":document_id})
+document_id (str): ID univoco del documento di cui si vuole recuperare i dettagli.
+title (str): Nome del punto di interesse di cui si vuole recuperare i dettagli quando non è disponibile l'id.
+"""
+    if document_id:
+        document=vector_store.similarity_search(query=" ",k=1,filter={"document_id":document_id})
+    else:
+        document=vector_store.similarity_search(query=title,k=1)
     return document
 
 @tool()
@@ -72,64 +88,78 @@ travel_time_to_accomodation (float): Tempo necessario per tornare all'alloggio a
 
     # Il controllo sul tempo è fatto anche a priori su search_places, ma lo mettiamo qui perché è aggirabile
     # TODO: comunque qui è da sistemare perché è fatto troppo semplice.
-    if cl.user_session.get("state", {}).get("remaining_time")>= visit_duration + travel_time:
-        remaining_time = cl.user_session.get("state", {}).get("remaining_time") - (visit_duration + travel_time)
-        cl.user_session.get("state", {})["remaining_time"] = remaining_time
-        cl.user_session.get("state", {}).get("Selected_places", []).append({
+    state=cl.user_session.get("state")
+    current_day_itinerary=state.get_current_day()
+    remaining_time=current_day_itinerary.remaining_time
+
+    if remaining_time>= visit_duration + travel_time:
+        remaining_time = remaining_time - (visit_duration + travel_time)
+        #cl.user_session.get("state", {})["remaining_time"] = remaining_time
+        current_day_itinerary.add_place({
             "document_id": document_id,
             "place_name": place_name,
             "visit_duration": visit_duration,
             "travel_time": travel_time,
             "travel_time_to_accomodation": travel_time_to_accomodation,
-            "day": cl.user_session.get("state", {}).get("current_day", 1)
         })
-        return f"Il luogo '{place_name}' è stato aggiunto all'itinerario per il giorno {cl.user_session.get('state', {}).get('current_day', 1)}. Tempo rimanente per il giorno: {round(cl.user_session.get('state', {}).get('remaining_time', 0))} ore."
+        #TODO ricorda che al momento il tempo di ritorno non viene visualizzato come tempo rimanente, dovrei considerarlo quando finisco la giornata oppure quando do l'itinerario completo
+        current_day_itinerary.remaining_time=remaining_time
+        state.set_current_day(current_day_itinerary)
+        cl.user_session.set("state",state)
+        return f"Il luogo '{place_name}' è stato aggiunto all'itinerario per il giorno {current_day_itinerary.day}. Tempo rimanente per il giorno: {round(current_day_itinerary.remaining_time)} ore."
     else:
-        return f"Non c'è abbastanza tempo rimanente per aggiungere '{place_name}' all'itinerario. Tempo necessario: {visit_duration + travel_time} ore, tempo rimanente: {cl.user_session.get('state', {}).get('remaining_time', 0)} ore. Tempo per tornare all'alloggio partendo dall'ultima tappa: {cl.user_session.get("state", {}).get("Selected_places", [])[-1].get("travel_time_to_accomodation")}"
+        return f"Non c'è abbastanza tempo rimanente per aggiungere '{place_name}' all'itinerario. Tempo necessario: {visit_duration + travel_time} ore, tempo rimanente: {current_day_itinerary.remaining_time} ore. Tempo per tornare all'alloggio partendo dall'ultima tappa: {current_day_itinerary.selected_places[-1].travel_time_to_accomodation}"
 
 @tool()
-def finish_day():
+def finish_day(ending_place:str=None):
     """Segna il giorno corrente come completato e passa al giorno successivo.
-Questo accade sotto richiesta dell'utente oppure quando il tempo rimanente per il giorno corrente è esaurito."""
-    state = cl.user_session.get("state", {})
-    if state.get("current_day") is not None:
-        state["current_day"] += 1
-        state["remaining_time"] = state.get("Daily_hours", 0)
-        state["starting_place"]=state["ending_place"]
-        cl.user_session.set("state", state)
-        #DEBUG
-        tool_message=f"Giorno {state['current_day'] - 1} completato. Passando al giorno {state['current_day']}. Ricorda all'utente di specificare il luogo con indirizzo dove terminerà la giornata se necessario (Hotel, B&B,ecc...)"
-        print(tool_message)
-        return tool_message
+Questo accade sotto richiesta dell'utente oppure quando il tempo rimanente per il giorno corrente è esaurito.
+Args:
+ending_place (str): Luogo in cui termina la giornata successiva (Es. Via esempio 17, Enna)."""
+    state = cl.user_session.get("state")
+    if state and ending_place:
+        current_day_itinerary= state.get_current_day()
+        state.next_day()
+        state.add_new_day(current_day_itinerary.ending_place["display_name"],ending_place)
+        cl.user_session.set("state",state)
+    elif state:
+        current_day_itinerary= state.get_current_day()
+        state.next_day()
+        state.add_new_day(current_day_itinerary.ending_place["display_name"],current_day_itinerary.ending_place["display_name"])
+        cl.user_session.set("state",state)
     else:
-        return "Errore: Giorno corrente non impostato."
+        return "ToolError"
 
 @tool()
-def update_planning_constraints(days: int, transport: Literal["auto", "pedestrian"], Max_distance_km: float, Daily_hours: float,current_day: int = 1,starting_place: str=None,ending_place:str=None):
-    """Aggiorna i vincoli di pianificazione nella sessione dell'utente.
+def update_planning_constraints(days: int, transport: Literal["auto", "pedestrian"], Daily_hours: float, Max_distance_km: float=70,current_day: int = 1,starting_place: str=None,ending_place:str=None):
+    """Aggiorna o inizializza i vincoli di pianificazione nella sessione dell'utente.
 Args:
 days (int): Numero di giorni per il viaggio.
 transport (str): Mezzo di trasporto preferito tra auto e camminare a piedi ("auto" o "pedestrian").
-Max_distance_km (float): Distanza massima tra un luogo e l'altro (consigliato in auto 70km).
+Max_distance_km (float): Distanza massima tra un luogo e l'altro (opzionale, default 70km).
 Daily_hours (float): Ore giornaliere disponibili per le attività.
 current_day (int): Giorno corrente dell'itinerario.
-starting_place (str): Luogo da cui parte la prima giornata (Es. Stazione centrale di Enna).
-ending_place (str): Luoco in cui termina la giornata corrente (Es. Via esempio 17, Enna)."""
-
-    cl.user_session.set("state", {
-        "planning_mode": True,
-        "days": days,
-        "transport": transport,
-        "Max_distance_km": Max_distance_km,
-        "Daily_hours": Daily_hours,
-        "Selected_places": [],
-        "starting_place": geocode_address(starting_place) if starting_place!=None else geocode_address("Enna"),
-        "ending_place": geocode_address(ending_place) if ending_place!=None else geocode_address("Enna"),
-        "current_day": current_day,
-        "remaining_time": Daily_hours,
-    })
-    print("Stato aggiornato:", cl.user_session.get("state", {}))
-    return f"Vincoli di pianificazione aggiornati: {days} giorni, {transport} mezzo di trasporto, {Max_distance_km} km raggio massimo, {Daily_hours} ore giornaliere."
+starting_place (str): Luogo in cui parte la PRIMISSIMA giornata (Es. Stazione centrale di Enna).
+ending_place (str): Luoco in cui termina la PRIMISSIMA giornata (Es. Via esempio 17, Enna).
+"""
+    state=cl.user_session.get("state",PlanningState())
+    #TODO implementare meglio la modifica della pianificazione che è abbastanza complicata, tenere conto di tutte le variabili
+    # che influenzano anche tutto quello che è già stato fatto
+    if(state.is_started()):
+        state.max_distance_km=Max_distance_km
+        cl.user_session.set("state",state)
+    else:
+        new_state=PlanningState(
+                            True,
+                            number_of_days=days,
+                            transport=transport,
+                            max_distance_km=Max_distance_km,
+                            daily_hours=Daily_hours,
+                            current_day=current_day) #0 per inizializzare e l'agente chiamerà per la prima volta finish day che dovrà
+                                                     #inserire un nuovo itinerary day
+        new_state.add_new_day(starting_place,ending_place)
+        cl.user_session.set("state",new_state)
+    return f"Vincoli di pianificazione aggiornati: {days} giorni, {transport} mezzo di trasporto, {Max_distance_km} km raggio massimo, {Daily_hours} ore giornaliere. Il giorno corrente è {current_day}"
 
 @tool(response_format="content_and_artifact")
 def search_places(query: str,filter: dict = None):
@@ -139,12 +169,12 @@ def search_places(query: str,filter: dict = None):
     filter=build_filter(filter) if filter else {}
     print(f"\n\nTool called with query: {query} and filter: {filter}\n\n")
 
-    retrieved_docs = vector_store.similarity_search(query, k=10,filter=filter)
+    retrieved_docs = vector_store.similarity_search(query, k=30,filter=filter)
     dense_docs=retrieved_docs
 
     sparse_docs = sparse_retriever.invoke(
     query=query,
-    k=10,
+    k=30,
     resource_types=raw_filter
     )
 
@@ -167,7 +197,12 @@ def search_places(query: str,filter: dict = None):
         )
     # print(len(reranked_fused_docs))
 
-    if cl.user_session.get("state",{}).get("planning_mode")==False:
+    state=cl.user_session.get("state")
+    current_itinerary_day=state.get_current_day() #Tipo ItineraryDay
+    max_distance_km=state.max_distance_km
+    remaining_time=current_itinerary_day.remaining_time #hours
+
+    if state.planning_mode==False:
         serialized = "\n\n".join(
                 (f"Source: {doc.metadata}\nContent: {doc.page_content}")
                 for doc in reranked_fused_docs
@@ -183,16 +218,15 @@ def search_places(query: str,filter: dict = None):
         for doc in reranked_reranked_fused_docs
     ]
 
-    remaining_time=cl.user_session.get("state", {}).get("remaining_time")
-    max_distance_km=cl.user_session.get("state", {}).get("Max_distance_km")
     # ============================================================
     # 2. Recuperiamo il punto di partenza della prossima tratta
     # ============================================================
-    selected_places = cl.user_session.get("state",{}).get("Selected_places")
-    current_day=cl.user_session.get("state",{}).get("current_day")
+
+    selected_places=current_itinerary_day.selected_places
+    current_day=current_itinerary_day.day
     print(f"Current day {current_day}\n")
     print(f"Last place day: {selected_places[-1].get("day")}") if selected_places else None
-    if selected_places and current_day==selected_places[-1].get("day"):
+    if selected_places:
         # Abbiamo già selezionato almeno un luogo:
         # la posizione corrente è l'ultimo luogo selezionato.
         last_selected = selected_places[-1]
@@ -204,7 +238,8 @@ def search_places(query: str,filter: dict = None):
     else:
         # Nessun luogo ancora selezionato:
         # partiamo dall'indirizzo iniziale dinamico dell'utente.
-        starting_point = cl.user_session.get("state", {}).get("starting_place")
+        #TODO vedere perché mi usciva come lista non so perché mentre ending place no
+        starting_point = current_itinerary_day.starting_place[0]
 
         # Non dovrebbe accadere teoricamente
         if not starting_point:
@@ -223,8 +258,8 @@ def search_places(query: str,filter: dict = None):
     # 3. Calcoliamo current -> candidati
     # ============================================================
     current_to_candidates = {}
-    transport=cl.user_session.get("state", {}).get("transport")
-    if selected_places and current_day==selected_places[-1].get("day"):
+    transport=state.transport
+    if selected_places:
 
         # --------------------------------------------------------
         # CASO NORMALE:
@@ -261,7 +296,8 @@ def search_places(query: str,filter: dict = None):
         # point non è un POI conosciuto.
         # --------------------------------------------------------
 
-        starting_point = cl.user_session.get("state", {}).get("starting_place")
+        #TODO vedere perché mi usciva come lista non so perché mentre ending place no
+        starting_point = current_itinerary_day.starting_place[0]
 
         if starting_point:
 
@@ -300,7 +336,7 @@ def search_places(query: str,filter: dict = None):
     # 4. Calcoliamo candidato -> destinazione finale
     # ============================================================
 
-    final_destination = cl.user_session.get("state", {}).get("ending_place")
+    final_destination = current_itinerary_day.ending_place
 
     candidate_to_final = {}
 
