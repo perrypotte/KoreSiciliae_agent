@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 import uuid
@@ -52,7 +53,7 @@ async def start():
 
 Posso aiutarti a:
 
-🔎 trovare luoghi, attrazioni e attività in base ai tuoi interessi;
+🔎 trovare luoghi, attrazioni e attività fornendo una piccola descrizione;
 🍽️ proporti esperienze e attività coerenti con le tue preferenze;
 🗺️ creare un itinerario personalizzato, organizzato giorno per giorno;
 📍 tenere conto di distanze, tempi di percorrenza e tempo disponibile;
@@ -63,7 +64,7 @@ Per iniziare a creare un itinerario, ti chiederò solo le informazioni necessari
 
 Se non indichi un punto di partenza o di arrivo, utilizzerò il centro di Enna come riferimento.
 
-Durante la pianificazione potrai anche modificare i tuoi vincoli, aggiungere o rimuovere le attività e decidere passo dopo passo cosa inserire nell'itinerario.
+Durante la pianificazione potrai decidere passo passo cosa inserire nell'itinerario e modificare se necessario la distanza massima che puoi percorrere per andare alla tappa successiva.
 
 Dimmi semplicemente cosa ti piacerebbe fare o scoprire a Enna e iniziamo!""",
         ).content
@@ -97,7 +98,7 @@ async def ui_bridge_add_place(action: cl.Action):
     messages = cl.user_session.get("messages", {"messages": []})
     history = messages["messages"]
     # Costruisci l'istruzione per l'agente
-    prompt = f"Aggiungi {place_title} (ID: {place_id}) (durata: {place_duration} ore) (tempo di viaggio: {place_travel_time} min) (tempo per tornare all'alloggio: {place_travel_time_to_accomodation}) all'itinerario"
+    prompt = f"Aggiungi {place_title} (ID: {place_id}) (durata: {place_duration} ore) (tempo di viaggio: {round(place_travel_time,2)} ore) (tempo per tornare all'alloggio: {round(place_travel_time_to_accomodation,2)} ore) all'itinerario"
     inputs = {
             "messages": [
                 {"role": "user", "content": prompt},
@@ -199,11 +200,6 @@ async def main(message: cl.Message):
         HumanMessage(content=message.content)
     )
 
-    #PERSISTENZA A LIVELLO DI SESSIONE DELLA CHAT
-    # inputs = {
-    #     "messages": history
-    # }
-
     #TODO: ogni tanto pacca l'output non so perché
     model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b", temperature=0,top_p=0.20,chat_template_kwargs={"enable_thinking":False})
     conversation = [
@@ -218,14 +214,22 @@ async def main(message: cl.Message):
                     """
     },
         ]
+    try:
+        response = model.invoke(conversation)
+        # print(response)  # AIMessage("J'adore créer des applications.")
 
-    response = model.invoke(conversation)
-    # print(response)  # AIMessage("J'adore créer des applications.")
-
-    print("Profilo prima: "+ str(cl.user_session.get("preferred_resource_types")))
-    print("Profilo aggiornato: "+ str(response.content))
-    cl.user_session.set("preferred_resource_types", json.loads(response.content))
-    # preferred_resource_types = response.content
-    print("Profilo dopo: "+ str(cl.user_session.get("preferred_resource_types")))
-    # Prepara un messaggio Chainlit vuoto che aggiornerai via token
-    await run_agent_pipeline(inputs,history)
+        print("Profilo prima: "+ str(cl.user_session.get("preferred_resource_types")))
+        print("Profilo aggiornato: "+ str(response.content))
+        cl.user_session.set("preferred_resource_types", json.loads(response.content))
+        # preferred_resource_types = response.content
+        print("Profilo dopo: "+ str(cl.user_session.get("preferred_resource_types")))
+        # Prepara un messaggio Chainlit vuoto che aggiornerai via token
+        await run_agent_pipeline(inputs,history)
+    except Exception as e:
+        msg = cl.Message(
+            content="⚠️ Servizio momentaneamente sovraccarico. Riprova tra poco."
+        )
+        await msg.send()
+        await asyncio.sleep(4)
+        await msg.remove()
+        return

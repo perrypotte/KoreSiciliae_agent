@@ -123,9 +123,12 @@ export default function PlaceCarousel() {
 
                         {/*togliere anche le graffe poi <p>🏷️ {place.category || "N/D"}</p>*/}
 
-                        {place.distance != null && (
-                            <p>📍 {place.distance} km dalla tappa precedente</p>
-                        )}
+
+                        {place.distance != null &&  (() => {
+                            const rawValue = Number(place.distance);
+                            const distance = Math.round(rawValue);
+                            return  <p>📍 {distance} km dalla tappa precedente</p>;
+                        })()}
 
                         {place.travel_time != null && (() => {
                             const rawValue = Number(place.travel_time);

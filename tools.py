@@ -117,18 +117,28 @@ Questo accade sotto richiesta dell'utente oppure quando il tempo rimanente per i
 Args:
 ending_place (str): Luogo in cui termina la giornata successiva (Es. Via esempio 17, Enna)."""
     state = cl.user_session.get("state")
-    if state and ending_place:
+    if state:
+        if  state.get_current_day().day>=state.number_of_days:
+            return "ToolError: Non puoi superare il numero di giorni stabilito in fase di pianificazione! Chiedi all'utente se vuole completare l'itinerario!"
         current_day_itinerary= state.get_current_day()
         state.next_day()
-        state.add_new_day(current_day_itinerary.ending_place["display_name"],ending_place)
+        if ending_place:
+            state.add_new_day(current_day_itinerary.ending_place["display_name"],ending_place)
+        else:
+            state.add_new_day(current_day_itinerary.ending_place["display_name"],current_day_itinerary.ending_place["display_name"])
         cl.user_session.set("state",state)
-    elif state:
-        current_day_itinerary= state.get_current_day()
-        state.next_day()
-        state.add_new_day(current_day_itinerary.ending_place["display_name"],current_day_itinerary.ending_place["display_name"])
-        cl.user_session.set("state",state)
+        return "Tool eseguito con successo: nuova giornata pronta per accogliere nuove tappe"
     else:
-        return "ToolError"
+        return "ToolError: Stato pianificazione non inizializzato"
+
+@tool()
+def finish_itinerary():
+    """Completa l'itinerario, mostrandolo cosi all'utente e azzerando lo stato della pianificazione.
+Può essere usato anche per resettare completamente l'itinerario per semplicità"""
+    temp_state = cl.user_session.get("state")
+    cl.user_session.set("state",PlanningState())
+    
+    return f"L'itinerario è stato completato e chiuso. Ecco il riepilogo da mostrare all'utente: {temp_state.to_prompt}. Per ogni giornata mostra anche luogo di partenza e luogo di arrivo e i tempi per andare da un luogo all'altro e per ogni giornata solo nell'ultimo luogo il tempo necessario per tornare all'alloggio"
 
 @tool()
 def update_planning_constraints(days: int, transport: Literal["auto", "pedestrian"], Daily_hours: float, Max_distance_km: float=70,current_day: int = 1,starting_place: str=None,ending_place:str=None):
@@ -198,9 +208,6 @@ def search_places(query: str,filter: dict = None):
     # print(len(reranked_fused_docs))
 
     state=cl.user_session.get("state")
-    current_itinerary_day=state.get_current_day() #Tipo ItineraryDay
-    max_distance_km=state.max_distance_km
-    remaining_time=current_itinerary_day.remaining_time #hours
 
     if state.planning_mode==False:
         serialized = "\n\n".join(
@@ -208,6 +215,10 @@ def search_places(query: str,filter: dict = None):
                 for doc in reranked_fused_docs
             )
         return serialized, reranked_fused_docs
+
+    current_itinerary_day=state.get_current_day() #Tipo ItineraryDay
+    max_distance_km=state.max_distance_km
+    remaining_time=current_itinerary_day.remaining_time #hours
    # ============================================================
    # 1. Recuperiamo gli ID dei candidati
    # ============================================================
@@ -544,4 +555,5 @@ ALL_TOOLS = [get_place_info,
              add_place_to_itinerary,
              finish_day,
              update_planning_constraints,
-             search_places]
+             search_places,
+             finish_itinerary]
