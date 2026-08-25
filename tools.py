@@ -13,11 +13,11 @@ from planning_state import PlanningState
 
 load_dotenv()
 
-embeddings = NVIDIAEmbeddings(model="nvidia/nv-embed-v1")
+embeddings = NVIDIAEmbeddings(model="nvidia/nemotron-3-embed-1b")
 
 vector_store = PGVector(
     embeddings=embeddings,
-    collection_name="koreSiciliae_resources_v6",
+    collection_name="koreSiciliae_resources_v7",
     connection=os.getenv("DATABASE2_URL"),
 )
 

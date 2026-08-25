@@ -24,7 +24,7 @@ DATABASE_URL = os.getenv("DATABASE2_URL")
 VALHALLA_URL = "http://localhost:8002/sources_to_targets"
 
 # Collection PGVector
-COLLECTION_NAME = "koreSiciliae_resources_v6"
+COLLECTION_NAME = "koreSiciliae_resources_v7"
 
 # Modalità di routing da calcolare
 ROUTING_MODES = [
@@ -64,7 +64,7 @@ BATCH_SIZE = 15
 # puoi sostituire questa parte con il tuo oggetto.
 
 embeddings = NVIDIAEmbeddings(
-    model="nvidia/nv-embed-v1"
+    model="nvidia/nemotron-3-embed-1b"
 )
 
 

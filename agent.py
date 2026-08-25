@@ -229,6 +229,7 @@ async def main(message: cl.Message):
         msg = cl.Message(
             content="⚠️ Servizio momentaneamente sovraccarico. Riprova tra poco."
         )
+        print(e)
         await msg.send()
         await asyncio.sleep(4)
         await msg.remove()
