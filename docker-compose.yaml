@@ -27,7 +27,35 @@ services:
       - tile_urls=https://download.geofabrik.de/europe/italy/isole-latest.osm.pbf
       # Mantiene i file nella cartella locale
       - force_rebuild=false
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: itinerary-reranker
+    ports:
+      - "8081:80"
+    volumes:
+      - ./models/reranker:/data
+    command:
+      - --model-id
+      - Alibaba-NLP/gte-multilingual-reranker-base
+    restart: unless-stopped
+
 volumes:
   pgdata:
     external: true
     name: my-ai-app_pgdata # es. langchain_project_prova_pgdata
+  caddy_data:
+  caddy_config:

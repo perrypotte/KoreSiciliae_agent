@@ -62,6 +62,8 @@ def geocode_address(
                     "display_name": res["display_name"],
                     #"raw": res
                 }
+            else:
+                return geocode_address("Enna, Sicilia, Italia", user_agent, country_codes)
         else:
             print(f"⚠️ Errore API Nominatim [{response.status_code}]: {response.text}")
 

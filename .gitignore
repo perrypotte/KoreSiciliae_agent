@@ -8,3 +8,5 @@ chainlit.md
 .chainlit
 .files
 valhalla_data
+Caddyfile
+models

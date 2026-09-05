@@ -1,5 +1,6 @@
 from langchain.tools import tool
 import chainlit as cl
+from reranker_adapter import TEIReranker, OpenRouterReranker
 from sparse_retriever import SparseRetriever
 from route_matrix_repository import RouteMatrixRepository
 from geocoding import geocode_address
@@ -71,13 +72,14 @@ document_id (str): ID univoco del documento di cui si vuole recuperare i dettagl
 title (str): Nome del punto di interesse di cui si vuole recuperare i dettagli quando non è disponibile l'id.
 """
     if document_id:
-        document=vector_store.similarity_search(query=" ",k=1,filter={"document_id":document_id})
+        document=vector_store.similarity_search(query="Enna",k=1,filter={"document_id":document_id})
     else:
         document=vector_store.similarity_search(query=title,k=1)
-    return document
+    tool_result=f"Dettagli del luogo '{document[0].metadata['title']}': {document[0].page_content}, durata della visita: {document[0].metadata['visit_duration']}, link ufficiale: {document[0].metadata['official_url']}. Note: Non mostrare dettagli tecnici come ad esempio l'id del documento."
+    return tool_result
 
 @tool()
-def add_place_to_itinerary(document_id: str, place_name: str,visit_duration: float,travel_time: float=0.0,travel_time_to_accomodation: float=0.0):
+def add_place_to_itinerary(document_id: str, place_name: str,visit_duration: float=0.4,travel_time: float=0.0,travel_time_to_accomodation: float=0.0):
     """Aggiunge un luogo selezionato all'itinerario dell'utente per un giorno specifico.
 Args:
 document_id (str): ID univoco del documento del luogo da aggiungere (uuid).
@@ -106,7 +108,7 @@ travel_time_to_accomodation (float): Tempo necessario per tornare all'alloggio a
         current_day_itinerary.remaining_time=remaining_time
         state.set_current_day(current_day_itinerary)
         cl.user_session.set("state",state)
-        return f"Il luogo '{place_name}' è stato aggiunto all'itinerario per il giorno {current_day_itinerary.day}. Tempo rimanente per il giorno: {round(current_day_itinerary.remaining_time)} ore."
+        return f"Il luogo '{place_name}' è stato aggiunto all'itinerario per il giorno {current_day_itinerary.day}. Tempo rimanente per il giorno: {round(current_day_itinerary.remaining_time)} ore. Chiedi all'utente se vuole continuare a cercare proposte per il giorno corrente o se vuole passare al giorno successivo."
     else:
         return f"Non c'è abbastanza tempo rimanente per aggiungere '{place_name}' all'itinerario. Tempo necessario: {visit_duration + travel_time} ore, tempo rimanente: {current_day_itinerary.remaining_time} ore. Tempo per tornare all'alloggio partendo dall'ultima tappa: {current_day_itinerary.selected_places[-1].travel_time_to_accomodation}"
 
@@ -138,21 +140,38 @@ Può essere usato anche per resettare completamente l'itinerario per semplicità
     temp_state = cl.user_session.get("state")
     cl.user_session.set("state",PlanningState())
     
-    return f"L'itinerario è stato completato e chiuso. Ecco il riepilogo da mostrare all'utente: {temp_state.to_prompt}. Per ogni giornata mostra anche luogo di partenza e luogo di arrivo e i tempi per andare da un luogo all'altro e per ogni giornata solo nell'ultimo luogo il tempo necessario per tornare all'alloggio"
+    return f"""
+Itinerario completato con successo.
+
+Riepilogo dati grezzi:
+{temp_state.to_prompt}
+
+ISTRUZIONI DI FORMATTAZIONE PER L'OUTPUT:
+Mostra l'itinerario diviso per giorni rispettando rigorosamente questa struttura visuale per ciascuna giornata:
+
+**Giorno X**
+Luogo di partenza giorno X-> [tempo in minuti] -> Nome POI 1 -> Permanenza: [durata visita in ore/minuti] -> [tempo in minuti] -> Nome POI 2 -> ... -> [tempo in minuti] -> Luogo di arrivo -> [tempo in minuti per il rientro] -> Alloggio giorno X
+
+Note:
+1. Calcola e mostra i tempi di percorrenza tra ogni tappa successiva.
+2. Per l'ultimo luogo della giornata, includi sempre il tempo necessario per rientrare all'alloggio.
+3. Se la durata della visita è 0 o prossima a 0, indica "Permanenza: variabile"
+"""
 
 @tool()
 def update_planning_constraints(days: int, transport: Literal["auto", "pedestrian"], Daily_hours: float, Max_distance_km: float=70,current_day: int = 1,starting_place: str=None,ending_place:str=None):
     """Aggiorna o inizializza i vincoli di pianificazione nella sessione dell'utente.
 Args:
 days (int): Numero di giorni per il viaggio.
-transport (str): Mezzo di trasporto preferito tra auto e camminare a piedi ("auto" o "pedestrian").
+transport (str): Mezzo di trasporto preferito tra auto e camminare a piedi ("auto" o "pedestrian")
 Max_distance_km (float): Distanza massima tra un luogo e l'altro (opzionale, default 70km).
 Daily_hours (float): Ore giornaliere disponibili per le attività.
 current_day (int): Giorno corrente dell'itinerario.
 starting_place (str): Luogo in cui parte la PRIMISSIMA giornata (Es. Stazione centrale di Enna).
 ending_place (str): Luoco in cui termina la PRIMISSIMA giornata (Es. Via esempio 17, Enna).
 """
-    state=cl.user_session.get("state",PlanningState())
+    print(f"Debug: {ending_place}")
+    state=cl.user_session.get("state")
     #TODO implementare meglio la modifica della pianificazione che è abbastanza complicata, tenere conto di tutte le variabili
     # che influenzano anche tutto quello che è già stato fatto
     if(state.is_started()):
@@ -172,40 +191,78 @@ ending_place (str): Luoco in cui termina la PRIMISSIMA giornata (Es. Via esempio
     return f"Vincoli di pianificazione aggiornati: {days} giorni, {transport} mezzo di trasporto, {Max_distance_km} km raggio massimo, {Daily_hours} ore giornaliere. Il giorno corrente è {current_day}"
 
 @tool(response_format="content_and_artifact")
-def search_places(query: str,filter: dict = None):
-    """Ricava informazioni per aiutare l'utente a trovare luoghi da inserire nel proprio itinerario"""
+def search_places(queries: list[str],filter: dict = None):
+    """Ricava informazioni per aiutare l'utente a trovare luoghi da inserire nel proprio itinerario
+Args:
+queries (list[str]): Lista di query per la ricerca. Note: Più query solo se c'è una distinzione netta tra le preferenze dell'utente, altrimenti è meglio una singola query più generica.
+filter (dict, optional): Filtro per la ricerca.
+"""
+    reranked_fused_docs = []
     print("Raw filter input:", filter)
-    raw_filter = filter
+    raw_filter = filter.copy()
     filter=build_filter(filter) if filter else {}
-    print(f"\n\nTool called with query: {query} and filter: {filter}\n\n")
+    
+    for query in queries:
+        print(f"\n\nTool called with query: {query} and filter: {filter}\n\n")
+        retrieved_docs = vector_store.similarity_search(query, k=15,filter=filter)
+        dense_docs=retrieved_docs
 
-    retrieved_docs = vector_store.similarity_search(query, k=30,filter=filter)
-    dense_docs=retrieved_docs
-
-    sparse_docs = sparse_retriever.invoke(
-    query=query,
-    k=30,
-    resource_types=raw_filter
-    )
-
-    # for doc in sparse_docs[0:2]:
-    #     print(f"\n\nSparse doc: {doc}\n\n")
-
-    fused_docs = sparse_retriever.reciprocal_rank_fusion([dense_docs, sparse_docs])
-    # print(len(fused_docs))
-
-    client = NVIDIARerank(
-        model="nv-rerank-qa-mistral-4b:1",
-        top_n=10 
-        # api_key=os.getenv("NVIDIA_API_KEY"),
-        )
-
-    reranked_fused_docs = client.compress_documents(
+        sparse_docs = sparse_retriever.invoke(
         query=query,
-        # documents=[Document(page_content=passage) for passage in fused_docs],
-        documents=fused_docs,
+        k=15,
+        resource_types=raw_filter
         )
-    # print(len(reranked_fused_docs))
+
+        # for doc in sparse_docs[0:2]:
+        #     print(f"\n\nSparse doc: {doc}\n\n")
+
+        fused_docs = sparse_retriever.reciprocal_rank_fusion([dense_docs, sparse_docs])
+        # print(len(fused_docs))
+
+        # client = NVIDIARerank(
+        #     model="nv-rerank-qa-mistral-4b:1",
+        #     top_n=10 
+        #     # api_key=os.getenv("NVIDIA_API_KEY"),
+        #     )
+
+        # reranked_fused_docs = client.compress_documents(
+            #     query=query,
+            #     # documents=[Document(page_content=passage) for passage in fused_docs],
+            #     documents=fused_docs,
+            #     )
+            # print(len(reranked_fused_docs))
+
+        #CPU WORKING RERANK FALLBACK
+        #     reranker = TEIReranker(
+        #     endpoint="http://localhost:8081",
+        #     top_n=10 if len(queries)==1 else 5,
+        # )
+
+        reranker=OpenRouterReranker(
+            endpoint="https://openrouter.ai/api/v1/rerank",
+            top_n=10,
+        )
+        reranked_fused_docs_temp = reranker.rerank(
+        query,
+        fused_docs,
+    )
+        
+        reranked_fused_docs.append(reranked_fused_docs_temp)
+        
+    # Appiattisce ed elimina i duplicati preservando l'ordine del reranker
+    seen_ids = set()
+    unique_docs = []
+
+    for doc_list in reranked_fused_docs:
+        for doc in doc_list:
+            # Usa id del documento come chiave per identificare i duplicati
+            doc_identifier = doc.metadata["document_id"]
+            
+            if doc_identifier not in seen_ids:
+                seen_ids.add(doc_identifier)
+                unique_docs.append(doc)
+
+    reranked_fused_docs = unique_docs
 
     state=cl.user_session.get("state")
 
@@ -466,7 +523,9 @@ def search_places(query: str,filter: dict = None):
         # --------------------------------------------------------
         # Controllo tempo
         # --------------------------------------------------------
-
+        skipped_due_to_time = None
+        skipped_due_to_distance = None
+        part_of_prompt = []
         if total_required_time > remaining_time:
 
             print(
@@ -474,7 +533,13 @@ def search_places(query: str,filter: dict = None):
                 f"required={total_required_time:.2f}h, "
                 f"remaining={remaining_time:.2f}h"
             )
-
+            if skipped_due_to_time is None:
+                skipped_due_to_time = True
+                part_of_prompt.append(
+                    f"Nota: alcuni luoghi sono stati esclusi perché "
+                    f"il tempo totale necessario per visitarli "
+                    f"supera il tempo rimanente per la giornata."
+                )
             continue
 
 
@@ -495,7 +560,14 @@ def search_places(query: str,filter: dict = None):
                     f"{current_distance:.2f} km > "
                     f"{max_distance_km} km"
                 )
-
+                if skipped_due_to_distance is None:
+                    skipped_due_to_distance = True
+                    part_of_prompt.append(
+                        f"Nota: alcuni luoghi sono stati esclusi perché "
+                        f"la distanza tra la tappa precedente e il luogo "
+                        f"supera la distanza massima consentita di "
+                        f"{max_distance_km} km."
+                    )
                 continue
 
             if final_distance > max_distance_km:
@@ -506,7 +578,16 @@ def search_places(query: str,filter: dict = None):
                     f"{final_distance:.2f} km > "
                     f"{max_distance_km} km"
                 )
-
+                if skipped_due_to_distance is None:
+                    skipped_due_to_distance = True
+                    print("DEBUG: final distance too long, adding note to prompt")
+                    part_of_prompt.append(
+                        f"Nota: alcuni luoghi sono stati esclusi perché "
+                        f"la distanza tra la tappa precedente e il luogo "
+                        f"supera la distanza massima consentita di "
+                        f"{max_distance_km} km."
+                        f"Proponi all'utente di modificare la distanza massima consentita per includere più luoghi o cercare altri luoghi."
+                    )
                 continue
 
 
@@ -543,11 +624,15 @@ def search_places(query: str,filter: dict = None):
     
     #Caso semplificato, documenti non compatibili ai vincoli di pianificazione
     if(len(reranked_fused_docs)==0):
-        return ("Non sono presenti documenti che rispettano la distanza o i limiti di tempo insieme ai luoghi di arrivo e partenza dell'utente. Proponi all'utente di estendere la distanza massima", [])
+        return ("Non sono presenti documenti che rispettano i vincoli di pianificazione"+", ".join(part_of_prompt), [])
     serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}")
         for doc in reranked_fused_docs
     )
+
+    # Aggiunge eventuali note al prompt
+    serialized += "\n\n" + "\n".join(part_of_prompt) if part_of_prompt else ""
+
     return serialized, reranked_fused_docs
 
 # Lista esportabile centralizzata

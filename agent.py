@@ -1,15 +1,33 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 import uuid
 import chainlit as cl
 from langchain.agents import create_agent
 from langchain.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langchain_openai import ChatOpenAI
+from langchain_openrouter import ChatOpenRouter
 from profile_middleware import ProfileMiddleware
 from tools import ALL_TOOLS
 from planning_state import PlanningState
 
+model=ChatOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    model="nvidia/nemotron-3-super-120b-a12b",
+    temperature=0.2,
+    top_p=0.4,
+    # max_tokens=2500,
+    # I parametri custom di OpenRouter vanno inseriti in extra_body
+    streaming=True,
+    reasoning={
+    "effort": "low",  # Default None; can be "low", "medium", or "high"
+    "summary": "concise",  # Can be "auto", "concise", or "detailed"
+},
+    # reasoning_effort="minimal"
+)
 
 def load_prompt(filename: str) -> str:
     return Path(f"prompts/{filename}").read_text(encoding="utf-8")
@@ -20,12 +38,22 @@ profile_updater_sys_prompt=load_prompt("profile_updater.txt")
 
 # Create the agent with a model and tools
 agent = create_agent(
-    model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b",
-                    temperature=0.2, #default 1 basso per determinismo (modifica la distribuzione di probabilità delle parole successive)
-                    top_p=0.4, #default 0.95, considera solo le parole la cui somma delle probabilità è >= a top_p 
-                    max_tokens=2500, #default 16384
-                    reasoning_budget=400, #default 16384
-                    chat_template_kwargs={"enable_thinking":True}),
+    # model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b",
+    #                 temperature=0.2, #default 1 basso per determinismo (modifica la distribuzione di probabilità delle parole successive)
+    #                 top_p=0.4, #default 0.95, considera solo le parole la cui somma delle probabilità è >= a top_p 
+    #                 max_tokens=2500, #default 16384
+    #                 reasoning_budget=400, #default 16384
+    #                 chat_template_kwargs={"enable_thinking":True}),
+    #FREE MODEL
+    # model=ChatOpenRouter(
+        # model="nvidia/nemotron-3-super-120b-a12b:free",
+        # temperature=0.2,
+        # top_p=0.4,
+        # max_tokens=2500,
+        # reasoning={"effort":"medium","summary":"concise"},
+    # ),
+    #PAID MODEL
+    model=model,
     tools=ALL_TOOLS,
     middleware=[
         ProfileMiddleware()
@@ -66,7 +94,9 @@ Se non indichi un punto di partenza o di arrivo, utilizzerò il centro di Enna c
 
 Durante la pianificazione potrai decidere passo passo cosa inserire nell'itinerario e modificare se necessario la distanza massima che puoi percorrere per andare alla tappa successiva.
 
-Dimmi semplicemente cosa ti piacerebbe fare o scoprire a Enna e iniziamo!""",
+Vuoi una mano a creare un itinerario o preferisci chiedermi qualcosa su Enna?
+ 
+Iniziamo!""",
         ).content
     ).send()
 
@@ -114,73 +144,84 @@ async def run_agent_pipeline(inputs: dict,history: list):
     messages = cl.user_session.get("messages", {"messages": []})
     msg = cl.Message(content="")
     has_streamed_tokens = False
-    has_documents=False
+    has_documents = False
+    element = None
+
     async for message_chunk, metadata in agent.astream(
         inputs,
-        stream_mode="messages" #Per lo streaming dei token in tempo reale
+        stream_mode="messages"
     ):
         # 1. STREAMING DEI TOKEN DELL'AGENTE (AIMessageChunk)
-        if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
-            # Invia il primo token ed evidenzia che il messaggio è attivo
+        if isinstance(message_chunk, AIMessageChunk):
+            # Salta se il chunk è una chiamata tool
+            if getattr(message_chunk, "tool_call_chunks", None) or getattr(message_chunk, "tool_calls", None):
+                continue
+
+            # Estrae solo il testo finale pulito, ignorando message_chunk.reasoning
+            token_text = getattr(message_chunk, "text", None)
+            
+            # Fallback di sicurezza se la proprietà text non è presente
+            if token_text is None:
+                content = message_chunk.content
+                if isinstance(content, str):
+                    token_text = content
+                elif isinstance(content, list):
+                    token_text = "".join(
+                        b.get("text", "") for b in content 
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                else:
+                    token_text = ""
+
+            # Filtro rapido per eventuali frammenti grezzi residui
+            if not token_text or "ool_call>" in token_text:
+                continue
+
             if not has_streamed_tokens:
                 await msg.send()
                 has_streamed_tokens = True
             
-            # Streamma il token in tempo reale nell'interfaccia
-            await msg.stream_token(message_chunk.content)
+            await msg.stream_token(token_text)
 
         # 2. GESTIONE DEI TOOL / DOCUMENTI (ToolMessage)
         elif isinstance(message_chunk, ToolMessage):
-            # Verifichiamo se il tool ha restituito documenti nell'artifact
             docs = getattr(message_chunk, "artifact", None)
-            
-            if docs and isinstance(docs, list):
-                if message_chunk.name == "search_places":
-                    has_documents=True
-                    places = []
-                    for doc in docs:
-                        md = doc.metadata
-                        # Genera un ID univoco per QUESTA risposta/carosello
-                        carousel_id = f"carousel_{uuid.uuid4().hex[:8]}"
-                        places.append({
-                                "id": md["document_id"],
-                                "title": md.get("title", "Senza titolo"),
-                                #"image": md.get("image"),
-                                "image": md["image_url"],
-                                "url":md["official_url"] if md["official_url"]!="" else md["url"],
-                                #"category": ", ".join(md.get("resource_types", [])),
-                                "distance": md.get("distance_km_from_last_selected"),
-                                "travel_time": md.get("travel_time_hours_from_last_selected"),
-                                #"distance_km_to_final_destination":md.get("distance_km_to_final_destination"),
-                                "travel_time_hours_to_final_destination":md.get("travel_time_hours_to_final_destination"),
-                                "visit_duration": md.get("visit_duration"),
-                                "planning":md.get("planning")
-                            })
+            if docs and isinstance(docs, list) and message_chunk.name == "search_places":
+                has_documents = True
+                places = []
+                for doc in docs:
+                    md = doc.metadata
+                    places.append({
+                        "id": md["document_id"],
+                        "title": md.get("title", "Senza titolo"),
+                        "image": md.get("image_url"),
+                        "url": md.get("official_url") or md.get("url"),
+                        "distance": md.get("distance_km_from_last_selected"),
+                        "travel_time": md.get("travel_time_hours_from_last_selected"),
+                        "travel_time_hours_to_final_destination": md.get("travel_time_hours_to_final_destination"),
+                        "visit_duration": md.get("visit_duration"),
+                        "planning": md.get("planning")
+                    })
 
-
-                        element = cl.CustomElement(
-                            name="PlaceCarousel",
-                            props={
-                                "places": places,
-                                "elementId": carousel_id # <--- ID UNIVOCO PER MESSAGGIO
-                            }
-                        )
+                carousel_id = f"carousel_{uuid.uuid4().hex[:8]}"
+                element = cl.CustomElement(
+                    name="PlaceCarousel",
+                    props={
+                        "places": places,
+                        "elementId": carousel_id
+                    }
+                )
 
     # 3. CHIUSURA E SALVATAGGIO IN CRONOLOGIA
     if has_streamed_tokens:
         await msg.update()
-        
-        # Salva l'output finale nella tua user session / storia
+        history = messages.get("messages", [])
         history.append(AIMessage(content=msg.content))
         messages["messages"] = history
         cl.user_session.set("messages", messages)
-        if has_documents:
-            await cl.Message(
-                            content="",
-                            elements=[element]
-                            ).send()
 
-
+    if has_documents and element:
+        await cl.Message(content="", elements=[element]).send()
 
 @cl.on_message
 async def main(message: cl.Message):
@@ -201,7 +242,22 @@ async def main(message: cl.Message):
     )
 
     #TODO: ogni tanto pacca l'output non so perché
-    model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b", temperature=0,top_p=0.20,chat_template_kwargs={"enable_thinking":False})
+    #FREE MODEL
+    #model=ChatNVIDIA(model="nvidia/nemotron-3-super-120b-a12b", temperature=0,top_p=0.20,chat_template_kwargs={"enable_thinking":False})
+
+    #PAID MODEL
+    model=ChatOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    model="nvidia/nemotron-3-super-120b-a12b",
+    temperature=0.2,
+    top_p=0.4,
+    reasoning={
+        "effort": "low",  # Default None; can be "low", "medium", or "high"
+        "summary": "concise",  # Can be "auto", "concise", or "detailed"
+    },
+    # reasoning_effort="minimal" NON FUNZIONA MA NELLA DOCS C'E'
+)
     conversation = [
     {"role": "system", "content":profile_updater_sys_prompt},
     {
@@ -214,23 +270,23 @@ async def main(message: cl.Message):
                     """
     },
         ]
-    try:
-        response = model.invoke(conversation)
-        # print(response)  # AIMessage("J'adore créer des applications.")
-
-        print("Profilo prima: "+ str(cl.user_session.get("preferred_resource_types")))
-        print("Profilo aggiornato: "+ str(response.content))
-        cl.user_session.set("preferred_resource_types", json.loads(response.content))
-        # preferred_resource_types = response.content
-        print("Profilo dopo: "+ str(cl.user_session.get("preferred_resource_types")))
-        # Prepara un messaggio Chainlit vuoto che aggiornerai via token
-        await run_agent_pipeline(inputs,history)
-    except Exception as e:
-        msg = cl.Message(
-            content="⚠️ Servizio momentaneamente sovraccarico. Riprova tra poco."
-        )
-        print(e)
-        await msg.send()
-        await asyncio.sleep(4)
-        await msg.remove()
-        return
+    # try:
+    response = model.invoke(conversation)
+    # print(response[0]["text"])
+    print(response)  # AIMessage("J'adore créer des applications.")
+    print("Profilo prima: "+ str(cl.user_session.get("preferred_resource_types")))
+    print("Profilo aggiornato: "+ str(response.content[1]["text"])) #Quando c'è reasoning è nel primo posto
+    cl.user_session.set("preferred_resource_types", json.loads(response.content[1]["text"]))
+    # preferred_resource_types = response.content
+    print("Profilo dopo: "+ str(cl.user_session.get("preferred_resource_types")))
+    # Prepara un messaggio Chainlit vuoto che aggiornerai via token
+    await run_agent_pipeline(inputs,history)
+    # except Exception as e:
+        # msg = cl.Message(
+            # content="⚠️ Servizio momentaneamente sovraccarico. Riprova tra poco."
+        # )
+        # print(e)
+        # await msg.send()
+        # await asyncio.sleep(4)
+        # await msg.remove()
+        # return
