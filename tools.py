@@ -108,7 +108,7 @@ travel_time_to_accomodation (float): Tempo necessario per tornare all'alloggio a
         current_day_itinerary.remaining_time=remaining_time
         state.set_current_day(current_day_itinerary)
         cl.user_session.set("state",state)
-        return f"Il luogo '{place_name}' è stato aggiunto all'itinerario per il giorno {current_day_itinerary.day}. Tempo rimanente per il giorno: {round(current_day_itinerary.remaining_time)} ore. Chiedi all'utente se vuole continuare a cercare proposte per il giorno corrente o se vuole passare al giorno successivo."
+        return f"Il luogo '{place_name}' è stato aggiunto all'itinerario per il giorno {current_day_itinerary.day}. Tempo rimanente per il giorno: {round(current_day_itinerary.remaining_time)} ore. Chiedi all'utente se vuole continuare a cercare proposte per il giorno corrente, chiedergli di cercare qualcosa in specifico o se vuole passare al giorno successivo."
     else:
         return f"Non c'è abbastanza tempo rimanente per aggiungere '{place_name}' all'itinerario. Tempo necessario: {visit_duration + travel_time} ore, tempo rimanente: {current_day_itinerary.remaining_time} ore. Tempo per tornare all'alloggio partendo dall'ultima tappa: {current_day_itinerary.selected_places[-1].travel_time_to_accomodation}"
 
@@ -150,7 +150,7 @@ ISTRUZIONI DI FORMATTAZIONE PER L'OUTPUT:
 Mostra l'itinerario diviso per giorni rispettando rigorosamente questa struttura visuale per ciascuna giornata:
 
 **Giorno X**
-Luogo di partenza giorno X-> [tempo in minuti] -> Nome POI 1 -> Permanenza: [durata visita in ore/minuti] -> [tempo in minuti] -> Nome POI 2 -> ... -> [tempo in minuti] -> Luogo di arrivo -> [tempo in minuti per il rientro] -> Alloggio giorno X
+[Nome luogo di partenza]-> Tragitto: [tempo in minuti] -> Nome POI 1 -> Permanenza: [durata visita in ore/minuti] -> Tragitto: [tempo in minuti] -> Nome POI 2 -> ... -> Nome POI N -> Permanenza: [durata visita in ore/minuti] ->  Tragitto finale:[tempo in minuti per il rientro ultimo POI] -> [Nome alloggio/luogo di arrivo finale]
 
 Note:
 1. Calcola e mostra i tempi di percorrenza tra ogni tappa successiva.
@@ -240,7 +240,7 @@ filter (dict, optional): Filtro per la ricerca.
 
         reranker=OpenRouterReranker(
             endpoint="https://openrouter.ai/api/v1/rerank",
-            top_n=10,
+            top_n=8 if len(queries)==1 else 3,
         )
         reranked_fused_docs_temp = reranker.rerank(
         query,
@@ -446,7 +446,9 @@ filter (dict, optional): Filtro per la ricerca.
     # ============================================================
 
     filtered_docs = []
-
+    part_of_prompt = []
+    skipped_due_to_time = None
+    skipped_due_to_distance = None
     for doc in reranked_reranked_fused_docs:
 
         document_id = doc.metadata["document_id"]
@@ -523,9 +525,6 @@ filter (dict, optional): Filtro per la ricerca.
         # --------------------------------------------------------
         # Controllo tempo
         # --------------------------------------------------------
-        skipped_due_to_time = None
-        skipped_due_to_distance = None
-        part_of_prompt = []
         if total_required_time > remaining_time:
 
             print(
@@ -567,6 +566,7 @@ filter (dict, optional): Filtro per la ricerca.
                         f"la distanza tra la tappa precedente e il luogo "
                         f"supera la distanza massima consentita di "
                         f"{max_distance_km} km."
+                        f"Proponi all'utente di modificare la distanza massima consentita per includere più luoghi o cercare altri luoghi."
                     )
                 continue
 
@@ -623,6 +623,7 @@ filter (dict, optional): Filtro per la ricerca.
     #print(f"documenti: {len(reranked_fused_docs)}")
     
     #Caso semplificato, documenti non compatibili ai vincoli di pianificazione
+    print("Debug skip: " + ", ".join(part_of_prompt))
     if(len(reranked_fused_docs)==0):
         return ("Non sono presenti documenti che rispettano i vincoli di pianificazione"+", ".join(part_of_prompt), [])
     serialized = "\n\n".join(
@@ -632,7 +633,6 @@ filter (dict, optional): Filtro per la ricerca.
 
     # Aggiunge eventuali note al prompt
     serialized += "\n\n" + "\n".join(part_of_prompt) if part_of_prompt else ""
-
     return serialized, reranked_fused_docs
 
 # Lista esportabile centralizzata

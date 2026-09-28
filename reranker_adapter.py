@@ -1,6 +1,6 @@
 import json
 import os
-
+import chainlit as cl
 import requests
 
 class TEIReranker:
@@ -82,6 +82,17 @@ class OpenRouterReranker:
 
         response.raise_for_status()
         results = response.json()
+
+        # --- ESTRAZIONE E ACCUMULO TOKEN ---
+        # OpenRouter restituisce solitamente i dati nel blocco "usage"
+        usage = results.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        total_tokens = usage.get("total_tokens", prompt_tokens)
+
+        # Salva di nuovo nella sessione
+        cl.user_session.set("token_usage", cl.user_session.get("token_usage", 0) + total_tokens)
+        # -----------------------------------
+
         # for result in results["results"]:
         #     document = result["document"]
         #     source = document.get("image") or document.get("text")

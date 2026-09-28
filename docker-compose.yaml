@@ -40,18 +40,6 @@ services:
       - caddy_config:/config
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    
-  reranker:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
-    container_name: itinerary-reranker
-    ports:
-      - "8081:80"
-    volumes:
-      - ./models/reranker:/data
-    command:
-      - --model-id
-      - Alibaba-NLP/gte-multilingual-reranker-base
-    restart: unless-stopped
 
 volumes:
   pgdata:

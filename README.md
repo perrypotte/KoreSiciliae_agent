@@ -1,1 +1,1 @@
-# siciliaeKore_demo
+## Knowledge base scripts need updating due to recent site changes

@@ -24,7 +24,6 @@ Categorie ammesse (usa SOLO queste stringhe esatte):
 - Shopping_Artigianato
 - Shopping_Cibo_e_vino
 - Shopping_Gioielli
-- Altro
 
 ---
 
