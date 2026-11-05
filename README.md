@@ -5,7 +5,6 @@
 [![Chainlit](https://img.shields.io/badge/Frontend-Chainlit-red)](https://docs.chainlit.io/)
 [![PGVector](https://img.shields.io/badge/Database-PostgreSQL%2016%20%2B%20PGVector-336791)](https://github.com/pgvector/pgvector)
 [![Valhalla](https://img.shields.io/badge/Routing-Valhalla%20(Sicily%20OSM)-green)](https://github.com/valhalla/valhalla)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **Master's Thesis Project (*Tesi di Laurea Magistrale Sperimentale*)**  
 > **Author:** Andrea Perricone  
